@@ -24,14 +24,14 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Awaitable, Callable, Sequence
 
 from webarhive.analysis.history import _parse_ts
 from webarhive.analysis.topic_shift import VersionFingerprint, is_shift
 from webarhive.cdx.client import CdxRow
-from webarhive.config.categories import CATEGORY_BY_KEY, FALLBACK_CATEGORY, Category, is_risky
+from webarhive.config.categories import CATEGORY_BY_KEY, FALLBACK_CATEGORY, is_risky
 from webarhive.fetcher.parser import ParsedPage, parse_html
 from webarhive.fetcher.snapshot import SnapshotContent, SnapshotFetcher, snapshot_url
 from webarhive.llm.client import OpenRouterClient
@@ -198,10 +198,13 @@ async def classify_topics(
 
     await asyncio.gather(*(_light_task(v) for v in versions))
 
-    # Stage 2: shift detection — keep first version + any that diverge.
+    # Stage 2: shift detection — spec §6 etap 2 wording is "соседних
+    # версий", so each version is compared against its IMMEDIATE
+    # predecessor (not against the last shifted point). The first
+    # version is always treated as a shift point so it gets classified.
     shift_indices: list[int] = [0]
     for i in range(1, len(versions)):
-        prev_fp = versions[shift_indices[-1]].fingerprint
+        prev_fp = versions[i - 1].fingerprint
         curr_fp = versions[i].fingerprint
         if is_shift(prev_fp, curr_fp, threshold=title_shift_threshold):
             shift_indices.append(i)

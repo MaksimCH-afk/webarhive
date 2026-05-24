@@ -27,9 +27,7 @@ from urllib.parse import urljoin, urlsplit
 import tldextract
 
 from webarhive.analysis.history import _parse_ts
-from webarhive.cdx.client import CdxRow
 from webarhive.db.models import RedirectClass
-from webarhive.fetcher.parser import parse_html
 from webarhive.fetcher.snapshot import SnapshotFetcher, snapshot_url
 from webarhive.llm.client import OpenRouterClient
 from webarhive.llm.prompts import build_redirect_prompt
@@ -229,6 +227,54 @@ async def analyze_redirects(
     return results
 
 
+async def _fetch_target_topic_signal(
+    *,
+    target_domain: str,
+    near_timestamp: datetime,
+    cdx,
+    fetcher: SnapshotFetcher,
+) -> dict:
+    """Spec §9.3: «мы и так фетчим тематику целевого домена».
+
+    Light topic signal for the redirect target: find the 200-status
+    capture of the target domain closest to `near_timestamp`, fetch
+    its title/description/h1. No heavy parse, no LLM classification —
+    just enough text for the redirect-LLM to compare brand/topic.
+    """
+    from webarhive.fetcher.parser import parse_html
+
+    signal: dict = {"domain": target_domain, "title": "", "description": "", "h1": ""}
+    try:
+        rows = await cdx.fetch_all(target_domain, match_type="domain")
+    except Exception as exc:
+        logger.warning("redirect target CDX failed for %s: %s", target_domain, exc)
+        signal["error"] = f"CDX недоступен: {type(exc).__name__}"
+        return signal
+
+    live = [r for r in rows if r.status_bucket == "200"]
+    if not live:
+        signal["status"] = "цель мёртва в архиве"
+        return signal
+
+    target_ts_str = near_timestamp.strftime("%Y%m%d%H%M%S")
+    chosen = min(live, key=lambda r: abs(int(r.timestamp[:14] or "0") - int(target_ts_str)))
+    try:
+        content = await fetcher.fetch(chosen.timestamp, chosen.original)
+    except Exception as exc:
+        signal["error"] = f"снапшот недоступен: {type(exc).__name__}"
+        return signal
+    if not content.body:
+        signal["status"] = "пустой снапшот цели"
+        return signal
+
+    parsed = parse_html(content.body, encoding=content.encoding, text_limit=None)
+    signal["title"] = parsed.title
+    signal["description"] = parsed.description
+    signal["h1"] = parsed.h1
+    signal["captured_at"] = chosen.timestamp
+    return signal
+
+
 async def llm_refine_redirects(
     redirects: Sequence[RedirectInfo],
     *,
@@ -236,18 +282,32 @@ async def llm_refine_redirects(
     llm: OpenRouterClient,
     model: str,
     fetcher: SnapshotFetcher,
+    cdx=None,
 ) -> list[RedirectInfo]:
     """Spec §9.3 — only on REVIEW-class borderline cases. Asks the model
     'same site / company move / hijack' based on topic of both sides;
-    safety default §7.1 preserved: uncertain → stays REVIEW."""
+    safety default §7.1 preserved: uncertain → stays REVIEW.
+
+    If a `cdx` client is supplied, we fetch the target domain's nearest
+    200-snapshot title/desc/h1 so the model actually sees topic on both
+    sides (spec wording: «модель решает по тематике обеих сторон»).
+    Without cdx we degrade to just passing target domain + URL.
+    """
     out: list[RedirectInfo] = []
     for r in redirects:
         if r.classification is not RedirectClass.REVIEW or not r.to_url:
             out.append(r)
             continue
-        # We don't have topic for target without a CDX lookup over there;
-        # fall back to passing whatever we know (target domain + URL).
-        target_topic = {"domain": r.target_domain, "url": r.to_url}
+        target_topic: dict
+        if cdx is not None and r.target_domain:
+            target_topic = await _fetch_target_topic_signal(
+                target_domain=r.target_domain,
+                near_timestamp=r.captured_at,
+                cdx=cdx,
+                fetcher=fetcher,
+            )
+        else:
+            target_topic = {"domain": r.target_domain, "url": r.to_url}
         sys_p, usr_p = build_redirect_prompt(from_topic=source_topic, to_topic=target_topic)
         resp = await llm.chat_json(model=model, system_prompt=sys_p, user_prompt=usr_p)
         parsed = resp.parsed or {}

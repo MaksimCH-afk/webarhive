@@ -88,7 +88,7 @@ class Run(Base):
     # Operator-supplied note, if any.
     note: Mapped[str | None] = mapped_column(String(256), nullable=True)
 
-    domains: Mapped[list["Domain"]] = relationship(back_populates="run", cascade="all, delete-orphan")
+    domains: Mapped[list[Domain]] = relationship(back_populates="run", cascade="all, delete-orphan")
 
 
 class Domain(Base):
@@ -122,10 +122,10 @@ class Domain(Base):
     finished_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
     run: Mapped[Run] = relationship(back_populates="domains")
-    epochs: Mapped[list["Epoch"]] = relationship(back_populates="domain_ref", cascade="all, delete-orphan")
-    redirects: Mapped[list["Redirect"]] = relationship(back_populates="domain_ref", cascade="all, delete-orphan")
-    drops: Mapped[list["Drop"]] = relationship(back_populates="domain_ref", cascade="all, delete-orphan")
-    llm_calls: Mapped[list["LlmCall"]] = relationship(back_populates="domain_ref", cascade="all, delete-orphan")
+    epochs: Mapped[list[Epoch]] = relationship(back_populates="domain_ref", cascade="all, delete-orphan")
+    redirects: Mapped[list[Redirect]] = relationship(back_populates="domain_ref", cascade="all, delete-orphan")
+    drops: Mapped[list[Drop]] = relationship(back_populates="domain_ref", cascade="all, delete-orphan")
+    llm_calls: Mapped[list[LlmCall]] = relationship(back_populates="domain_ref", cascade="all, delete-orphan")
 
     __table_args__ = (
         Index("ix_domain_run_domain", "run_id", "domain"),

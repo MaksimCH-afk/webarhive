@@ -103,7 +103,7 @@ class OpenRouterClient:
         if self._owns_client:
             await self._client.aclose()
 
-    async def __aenter__(self) -> "OpenRouterClient":
+    async def __aenter__(self) -> OpenRouterClient:
         return self
 
     async def __aexit__(self, *exc) -> None:

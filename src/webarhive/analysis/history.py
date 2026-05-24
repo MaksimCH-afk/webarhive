@@ -12,9 +12,9 @@ Status buckets (spec §4):
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Iterable
 
 from webarhive.cdx.client import CdxRow
 

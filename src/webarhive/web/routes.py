@@ -13,11 +13,17 @@ import asyncio
 import json
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Request, UploadFile
-from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse, RedirectResponse, StreamingResponse
+from fastapi import APIRouter, File, Form, HTTPException, Query, Request, UploadFile
+from fastapi.responses import (
+    HTMLResponse,
+    JSONResponse,
+    PlainTextResponse,
+    RedirectResponse,
+    StreamingResponse,
+)
 from sqlalchemy import desc, select
 
-from webarhive.config import get_settings
+from webarhive.config import get_settings, save_overrides
 from webarhive.db.engine import get_session
 from webarhive.db.models import Domain, DomainStatus, Drop, Epoch, LlmCall, Redirect, Run, RunStatus
 from webarhive.db.repo import unzip_text
@@ -126,10 +132,59 @@ async def help_page(request: Request):
 
 
 @html_router.get("/settings", response_class=HTMLResponse)
-async def settings_page(request: Request):
+async def settings_page(request: Request, saved: bool = False):
+    s = get_settings()
     return get_templates(request).TemplateResponse(
-        request, "settings.html", {"settings": get_settings()}
+        request, "settings.html",
+        {"settings": s, "fields": s.editable_fields(), "saved": saved},
     )
+
+
+# Editable field types — for parsing the form values.
+_BOOL_FIELDS = {"enable_verdict", "enable_smart_drop", "enable_redirect_llm",
+                "check_subdomains"}
+_INT_FIELDS = {"max_llm_calls_per_domain", "text_limit", "title_shift_threshold",
+               "concurrency", "ia_max_retries"}
+_FLOAT_FIELDS = {"cost_budget_per_domain", "ia_rate_limit", "ia_backoff"}
+
+
+@html_router.post("/settings", response_class=HTMLResponse)
+async def settings_save(request: Request):
+    """Persist UI edits to data/settings.json (spec §11, §15).
+
+    Booleans come from checkboxes (present=true / absent=false).
+    Validation: numeric fields cast or rejected; string model fields trimmed.
+    """
+    form = await request.form()
+    updates: dict = {}
+
+    # Booleans: any value present = true, absent = false
+    for f in _BOOL_FIELDS:
+        updates[f] = f in form
+
+    # Numbers
+    for f in _INT_FIELDS:
+        if f in form:
+            try:
+                updates[f] = int(str(form[f]).strip())
+            except ValueError:
+                pass
+    for f in _FLOAT_FIELDS:
+        if f in form:
+            try:
+                updates[f] = float(str(form[f]).strip())
+            except ValueError:
+                pass
+
+    # Strings (model ids)
+    for f in ("model_classification", "model_verdict", "model_smart_drop", "model_redirect"):
+        if f in form:
+            v = str(form[f]).strip()
+            if v:
+                updates[f] = v
+
+    save_overrides(updates)
+    return RedirectResponse(url="/settings?saved=1", status_code=303)
 
 
 # ----- API: upload + launch -----

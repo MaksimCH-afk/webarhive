@@ -3,17 +3,74 @@
 {% block content %}
 <section class="card stack prose">
   <h1 class="h1">Настройки</h1>
-  <p class="muted">Глобальные настройки управляются через env-файл. При запуске прогона снимок настроек копируется в запись прогона — в истории видно, на каких параметрах считался конкретный прогон.</p>
+  <p class="muted small">Глобальные настройки действуют на будущие прогоны. Снимок копируется в каждый прогон (spec §11) — в истории видно, на каких параметрах считался конкретный прогон.</p>
 
-  <h2 class="h2">Текущий снимок</h2>
-  <pre class="mono small">{{ settings.snapshot()|tojson(indent=2) }}</pre>
+  {% if saved %}
+  <div class="bubble">Сохранено. Изменения применятся к следующему прогону.</div>
+  {% endif %}
 
-  <h2 class="h2">Секреты</h2>
+  <form method="post" action="/settings" class="stack">
+    <h2 class="h2">Модели по ролям</h2>
+    <p class="small muted">Каждой роли можно назначить разную модель — классификацию обычно ставят дешёвой, вердикт — умной.</p>
+    <div class="grid-2">
+      <div>
+        <label class="label">classification</label>
+        <input type="text" name="model_classification" value="{{ fields.model_classification }}">
+      </div>
+      <div>
+        <label class="label">verdict</label>
+        <input type="text" name="model_verdict" value="{{ fields.model_verdict }}">
+      </div>
+      <div>
+        <label class="label">smart_drop</label>
+        <input type="text" name="model_smart_drop" value="{{ fields.model_smart_drop }}">
+      </div>
+      <div>
+        <label class="label">redirect</label>
+        <input type="text" name="model_redirect" value="{{ fields.model_redirect }}">
+      </div>
+    </div>
+
+    <h2 class="h2">Роли LLM (включить/выключить)</h2>
+    <div class="row gap">
+      <label><input type="checkbox" name="enable_verdict" value="true" {% if fields.enable_verdict %}checked{% endif %}> вердикт</label>
+      <label><input type="checkbox" name="enable_smart_drop" value="true" {% if fields.enable_smart_drop %}checked{% endif %}> умный дроп</label>
+      <label><input type="checkbox" name="enable_redirect_llm" value="true" {% if fields.enable_redirect_llm %}checked{% endif %}> LLM-решение по редиректу</label>
+    </div>
+
+    <h2 class="h2">Лимиты и пороги</h2>
+    <div class="grid-2">
+      <div><label class="label">MAX_LLM_CALLS_PER_DOMAIN</label><input type="number" name="max_llm_calls_per_domain" min="1" max="500" value="{{ fields.max_llm_calls_per_domain }}"></div>
+      <div><label class="label">COST_BUDGET_PER_DOMAIN ($)</label><input type="number" step="0.01" name="cost_budget_per_domain" value="{{ fields.cost_budget_per_domain }}"></div>
+      <div><label class="label">TEXT_LIMIT (тело)</label><input type="number" name="text_limit" min="200" max="20000" value="{{ fields.text_limit }}"></div>
+      <div><label class="label">TITLE_SHIFT_THRESHOLD</label><input type="number" name="title_shift_threshold" min="0" max="20" value="{{ fields.title_shift_threshold }}"></div>
+    </div>
+
+    <h2 class="h2">Параллелизм и троттлинг IA</h2>
+    <div class="grid-2">
+      <div><label class="label">CONCURRENCY (доменов одновременно)</label><input type="number" name="concurrency" min="1" max="20" value="{{ fields.concurrency }}"></div>
+      <div><label class="label">IA_RATE_LIMIT (req/sec)</label><input type="number" step="0.1" name="ia_rate_limit" value="{{ fields.ia_rate_limit }}"></div>
+      <div><label class="label">IA_BACKOFF (сек, база)</label><input type="number" step="0.1" name="ia_backoff" value="{{ fields.ia_backoff }}"></div>
+      <div><label class="label">IA_MAX_RETRIES</label><input type="number" min="0" max="20" name="ia_max_retries" value="{{ fields.ia_max_retries }}"></div>
+    </div>
+
+    <h2 class="h2">Вход</h2>
+    <label><input type="checkbox" name="check_subdomains" value="true" {% if fields.check_subdomains %}checked{% endif %}> CHECK_SUBDOMAINS — анализировать поддомены как отдельные сущности</label>
+
+    <div class="row gap">
+      <button class="btn primary" type="submit">Сохранить</button>
+      <a class="btn" href="/">Отмена</a>
+    </div>
+  </form>
+
+  <h2 class="h2">Секреты и развёртывание</h2>
+  <p class="small muted">Эти параметры берутся только из env-файла, не редактируются через UI.</p>
   <div class="kv"><span>OPENROUTER_API_KEY</span><b>{% if settings.openrouter_api_key %}✓ задан ({{ settings.openrouter_api_key[:6] }}…){% else %}<span class="verdict-dirty">не задан — классификация и вердикт не сработают</span>{% endif %}</b></div>
-
-  <h2 class="h2">Развёртывание</h2>
   <div class="kv"><span>APP_DOMAIN</span><b class="mono">{{ settings.app_domain }}</b></div>
+  <div class="kv"><span>DATABASE_URL</span><b class="mono small clip">{{ settings.database_url }}</b></div>
   <div class="kv"><span>TRUST_PROXY_HEADERS</span><b>{{ 'да' if settings.trust_proxy_headers else 'нет' }}</b></div>
-  <p class="small muted">Дашборд предназначен для работы за Cloudflare Tunnel + Cloudflare Access. Внутренней авторизации нет — закрывается на периметре.</p>
+
+  <h2 class="h2">Текущий снимок (для отладки)</h2>
+  <pre class="mono small">{{ settings.snapshot()|tojson(indent=2) }}</pre>
 </section>
 {% endblock %}

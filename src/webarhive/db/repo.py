@@ -7,8 +7,8 @@ keeping `runs` view, the canvas, and the card page fast.
 from __future__ import annotations
 
 import gzip
+from collections.abc import Iterable
 from datetime import datetime
-from typing import Iterable
 
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -24,7 +24,6 @@ from webarhive.db.models import (
     RunStatus,
     Verdict,
 )
-
 
 # ----- runs -----
 

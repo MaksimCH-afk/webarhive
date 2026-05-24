@@ -60,11 +60,11 @@ class VersionFingerprint:
     words: tuple[str, ...]
 
     @classmethod
-    def from_fields(cls, title: str, description: str, h1: str) -> "VersionFingerprint":
+    def from_fields(cls, title: str, description: str, h1: str) -> VersionFingerprint:
         tokens = _tokenize(" ".join((title or "", description or "", h1 or "")))
         return cls(tuple(sorted(tokens)))
 
-    def diff_count(self, other: "VersionFingerprint") -> int:
+    def diff_count(self, other: VersionFingerprint) -> int:
         """Number of words present in exactly one of the two fingerprints
         (treats inputs as sets — permutation is invariant)."""
         a, b = set(self.words), set(other.words)

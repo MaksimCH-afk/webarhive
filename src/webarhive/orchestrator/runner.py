@@ -23,11 +23,10 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from collections.abc import Iterable
 from datetime import datetime
-from typing import Iterable
 
 import httpx
-from sqlalchemy import update
 from sqlalchemy.ext.asyncio import async_sessionmaker
 
 from webarhive.analysis.drops import find_gaps, score_drops, smart_drop_assess
@@ -37,7 +36,6 @@ from webarhive.analysis.topics import TopicResult, classify_topics
 from webarhive.analysis.verdict import make_verdict
 from webarhive.cdx.client import CdxClient
 from webarhive.cdx.throttle import IAThrottle
-from webarhive.config.categories import is_risky
 from webarhive.db import (
     Domain,
     DomainStatus,
@@ -194,6 +192,7 @@ async def process_domain(
                     llm=llm,
                     model=models["redirect"],
                     fetcher=fetcher,
+                    cdx=cdx,
                 )
                 tracer.info("LLM-уточнение редиректов выполнено")
 
@@ -271,11 +270,11 @@ async def process_domain(
                     versions_in_epoch=ep.versions_in_epoch,
                 ))
 
-            # Redirects (skip technical from DB to keep card readable;
-            # they're explicitly «не интересны» per spec §7).
+            # Redirects — spec §7 says technical redirects are "не
+            # интересны, отмечаем как технические" — so we save them
+            # marked as such, and the UI hides them behind a collapsed
+            # section. Don't drop them from the DB.
             for r in redirects:
-                if r.classification.value == "technical":
-                    continue
                 s.add(Redirect(
                     domain_id=d.id,
                     captured_at=r.captured_at,

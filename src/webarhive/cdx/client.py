@@ -14,8 +14,9 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from collections.abc import AsyncIterator
 from dataclasses import dataclass
-from typing import AsyncIterator, Literal
+from typing import Literal
 
 import httpx
 from tenacity import (
@@ -45,7 +46,7 @@ class CdxRow:
     length: str
 
     @classmethod
-    def from_list(cls, row: list[str]) -> "CdxRow":
+    def from_list(cls, row: list[str]) -> CdxRow:
         return cls(
             urlkey=row[0],
             timestamp=row[1],
@@ -98,13 +99,13 @@ class CdxClient:
         if self._owns_client:
             await self._client.aclose()
 
-    async def __aenter__(self) -> "CdxClient":
+    async def __aenter__(self) -> CdxClient:
         return self
 
     async def __aexit__(self, *exc) -> None:
         await self.aclose()
 
-    async def _get(self, params: dict) -> httpx.Response:
+    async def _get(self, params: list[tuple[str, str]] | dict) -> httpx.Response:
         await self._throttle.acquire()
         retryer = AsyncRetrying(
             stop=stop_after_attempt(self._max_retries),
@@ -117,10 +118,13 @@ class CdxClient:
                 resp = await self._client.get(CDX_URL, params=params)
                 # Retry on 429/5xx
                 if resp.status_code in (429,) or 500 <= resp.status_code < 600:
+                    url_for_log = (
+                        dict(params).get("url") if isinstance(params, list) else params.get("url")
+                    )
                     logger.warning(
-                        "CDX throttled/failed status=%s for params=%s — backing off",
+                        "CDX throttled/failed status=%s for url=%s — backing off",
                         resp.status_code,
-                        params.get("url"),
+                        url_for_log,
                     )
                     raise httpx.HTTPStatusError(
                         "retryable", request=resp.request, response=resp
@@ -139,24 +143,30 @@ class CdxClient:
     ) -> AsyncIterator[CdxRow]:
         """Stream CDX rows for a domain, paginating via resumeKey.
 
-        Server-side dedup is enabled via collapse=urlkey + collapse=digest:
-        identical content under same URL is collapsed. Different URLs stay.
+        Server-side dedup uses BOTH collapse=urlkey and collapse=digest
+        per spec §3.1: combined they collapse "same URL with same content"
+        within each urlkey group while still preserving distinct URLs.
+        httpx serialises a list-of-tuples into a repeated query parameter.
         """
-        params: dict[str, str | int] = {
-            "url": domain,
-            "matchType": match_type,
-            "output": "json",
-            "fl": ",".join(fields),
-            "collapse": "digest",  # primary collapse — same content collapsed
-            "limit": page_limit,
-            "showResumeKey": "true",
-        }
+        # base params dict (single-valued), then append the two collapse
+        # parameters separately so they appear twice in the query string.
+        base_params: list[tuple[str, str]] = [
+            ("url", domain),
+            ("matchType", match_type),
+            ("output", "json"),
+            ("fl", ",".join(fields)),
+            ("collapse", "urlkey"),
+            ("collapse", "digest"),
+            ("limit", str(page_limit)),
+            ("showResumeKey", "true"),
+        ]
         resume_key: str | None = None
         page_no = 0
 
         while True:
+            params = list(base_params)
             if resume_key:
-                params["resumeKey"] = resume_key
+                params.append(("resumeKey", resume_key))
             resp = await self._get(params)
             data = resp.json() if resp.content else []
             if not data:

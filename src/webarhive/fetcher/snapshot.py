@@ -110,7 +110,7 @@ class SnapshotFetcher:
         if self._owns_client:
             await self._client.aclose()
 
-    async def __aenter__(self) -> "SnapshotFetcher":
+    async def __aenter__(self) -> SnapshotFetcher:
         return self
 
     async def __aexit__(self, *exc) -> None:

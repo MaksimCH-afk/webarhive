@@ -68,11 +68,13 @@
   {% else %}<div class="muted">эпох нет</div>{% endif %}
 
   <h3 class="h3">Редиректы</h3>
-  {% if redirects %}
+  {% set interesting_redirects = redirects|rejectattr('classification', 'equalto', 'technical')|list %}
+  {% set technical_redirects = redirects|selectattr('classification', 'equalto', 'technical')|list %}
+  {% if interesting_redirects %}
   <table class="dense">
     <thead><tr><th>дата</th><th>откуда</th><th>куда</th><th>цель</th><th>класс</th><th>причина</th><th>слепок</th></tr></thead>
     <tbody>
-    {% for r in redirects %}
+    {% for r in interesting_redirects %}
       <tr class="redir-{{ r.classification }}">
         <td class="mono small">{{ r.captured_at.strftime('%Y-%m-%d') }}</td>
         <td class="mono small clip">{{ r.from_url }}</td>
@@ -90,7 +92,26 @@
     {% endfor %}
     </tbody>
   </table>
-  {% else %}<div class="muted">редиректов нет</div>{% endif %}
+  {% elif not technical_redirects %}<div class="muted">редиректов нет</div>{% endif %}
+
+  {% if technical_redirects %}
+  <details class="small">
+    <summary>Технические редиректы (свой домен / схема / www) — {{ technical_redirects|length }}</summary>
+    <table class="dense">
+      <thead><tr><th>дата</th><th>откуда</th><th>куда</th><th>причина</th></tr></thead>
+      <tbody>
+      {% for r in technical_redirects %}
+        <tr>
+          <td class="mono small">{{ r.captured_at.strftime('%Y-%m-%d') }}</td>
+          <td class="mono small clip">{{ r.from_url }}</td>
+          <td class="mono small clip">{{ r.to_url or '—' }}</td>
+          <td class="small">{{ r.reason or '' }}</td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </details>
+  {% endif %}
 </section>
 
 <!-- B: Context -->
