@@ -1,40 +1,127 @@
 # webarhive
 
-Server-side domain checker over Internet Archive (Wayback Machine).
+Серверный инструмент для технической команды: проверяет «чистоту» и историю
+доменов по данным Internet Archive (Wayback Machine). На входе — список
+доменов; на выходе по каждому домену картина: возраст по архиву, лента
+тематических эпох, timeline кодов ответа, классифицированные редиректы,
+предполагаемые дропы, опциональный сводный вердикт чистый/нюансы/грязный.
 
-Takes a list of domains → returns per-domain picture: age in archive,
-topic-epoch timeline, status-code timeline, redirect targets, suspected
-drops, optional clean/nuanced/dirty verdict.
+Спецификация — `/root/.claude/uploads/.../domain_checker_spec.md`. Якоря
+разделов цитируются в docstrings как `(spec §N)`.
 
-See `/root/.claude/uploads/.../domain_checker_spec.md` for the full
-spec. Section anchors are referenced in docstrings as `(spec §N)`.
+## Структура
 
-## Quick start
+| Пакет             | Спец      | Назначение |
+|-------------------|-----------|------------|
+| `config/`         | §10–11    | Settings (env), категории |
+| `domains/`        | §2        | Загрузка + строгая нормализация (PSL) |
+| `cdx/`            | §3, §14   | CDX Server API + общий троттлинг IA |
+| `fetcher/`        | §3.2      | Снапшоты (`id_` / без `id_`), кодировки |
+| `analysis/`       | §4–8      | История, тематика, редиректы, дропы, вердикт |
+| `llm/`            | §6, §9    | OpenRouter, промпты по ролям |
+| `orchestrator/`   | §2.1–2.2  | Пайплайн прогона, параллелизм, возобновляемость |
+| `logging_/`       | §12       | Трассировка карточки (аудит LLM — в БД) |
+| `db/`             | §13       | Модели SQLAlchemy, Alembic |
+| `web/`            | §15–17    | Дашборд: 4 экрана + справка |
+| `cli.py`          | §2        | `webarhive scan` / `webarhive run` |
+
+## Быстрый старт (локально)
 
 ```bash
 pip install -e ".[dev]"
 cp .env.example .env
-# fill OPENROUTER_API_KEY in .env
+# заполнить OPENROUTER_API_KEY в .env (без него классификация выключена)
+
+# инициализировать БД
+alembic upgrade head
+
+# одноразовый scan (только CDX, без LLM/БД)
+webarhive scan example.com
+
+# полный прогон по нескольким доменам
+webarhive run example.com blog.foo.co.uk
+
+# из файла (первый столбец .xlsx/.csv, или построчно .txt)
+webarhive run --file domains.txt
+
+# дашборд (http://127.0.0.1:8000)
+uvicorn webarhive.web:create_app --factory --reload
+```
+
+## Тесты
+
+```bash
 pytest -q
 ```
 
-## Architecture
+## Развёртывание
 
-Layered by responsibility:
+### Docker
 
-| Package | Spec | Purpose |
-|---------|------|---------|
-| `config/` | §10–11 | Settings (env-driven), category enum |
-| `domains/` | §2 | Loading + strict normalization |
-| `cdx/` | §3, §14 | CDX Server API client with shared IA throttle |
-| `analysis/` | §4–8 | History, topic epochs, redirects, drops |
-| `fetcher/` | §3.2 | Snapshot fetch (`id_` for machine, plain for human) |
-| `llm/` | §6, §9 | OpenRouter client with per-role models |
-| `orchestrator/` | §2.1–2.2 | Run lifecycle, parallel queue, resumability |
-| `db/` | §13 | SQLAlchemy models, Alembic migrations |
-| `logging_/` | §12 | Trace + LLM audit (separate sinks) |
-| `web/` | §15–17 | FastAPI dashboard, light theme, dense tables |
+```bash
+docker compose up -d --build
+```
 
-## Status
+Контейнер слушает только на `127.0.0.1:8000` — наружу его выставляет
+Cloudflare Tunnel (см. ниже). Том `./data` хранит SQLite-БД.
 
-Bootstrap stage. See git log for what's wired up.
+### Cloudflare Tunnel + Access (spec §17)
+
+Дашборд не публичный. Рекомендованная схема:
+
+1. На сервере поднять `cloudflared tunnel run`, направить трафик на
+   `http://127.0.0.1:8000`. Сервер ничего наружу не публикует.
+2. В Cloudflare Dashboard завести служебный поддомен (например
+   `checker.mycompany.com`) и связать его с туннелем.
+3. Включить **Cloudflare Access** для этого поддомена — авторизация
+   только своих. Внутри приложения учёток нет (закрывается на периметре).
+4. В `.env` задать `APP_DOMAIN=checker.mycompany.com`.
+
+uvicorn в Dockerfile запущен с `--proxy-headers --forwarded-allow-ips=*`
+— приложение видит реальный IP клиента и схему `https`. Без этого
+ссылки строились бы как `http://`, а в логах было бы IP Cloudflare.
+
+### Альтернатива: Postgres
+
+В `.env`:
+```
+DATABASE_URL=postgresql+asyncpg://user:pass@host:5432/webarhive
+```
+`alembic upgrade head` поднимет схему. Зависимость `asyncpg` уже в
+проекте.
+
+## Ключевые принципы (легко упустить)
+
+- **«Возраст» = первая активность в архиве**, это НЕ дата регистрации
+  домена. Wayback её не знает.
+- **Тематика считается по версиям** (после схлопывания по digest), а не
+  по каждому снапшоту — иначе сотни дублей и лишние LLM-вызовы.
+- **Редиректы**: при сомнении — перестраховка в «обратить внимание»
+  плюс ссылка-слепок (без `id_`) для ручной проверки.
+- **Дропы** — эвристика, подаются как предположение.
+- **Настройки глобальные**, но снимок копируется в каждый прогон —
+  чтобы в истории было видно, на какой модели и каких лимитах
+  считался конкретный прогон.
+- **Модель — всегда параметр**, никакого хардкода. Каждая LLM-роль
+  (classification / verdict / smart_drop / redirect) имеет свой
+  параметр модели и свой флаг вкл/выкл.
+
+## Статус реализации
+
+| Этап | Блок | Статус |
+|-----:|------|--------|
+| 1    | Скелет + конфиг + категории | ✓ |
+| 2    | БД + Alembic | ✓ |
+| 3    | Загрузка/нормализация | ✓ |
+| 4    | CDX-клиент + троттлинг | ✓ |
+| 5    | История + статусы | ✓ |
+| 6    | Фетч + парсинг + сдвиг | ✓ |
+| 7    | LLM-классификация + эпохи | ✓ |
+| 8    | Редиректы + опц. LLM | ✓ |
+| 9    | Дропы + опц. LLM | ✓ |
+| 10   | Финальный вердикт | ✓ |
+| 11   | Оркестратор + резумо | ✓ |
+| 12   | Трассировка + аудит | ✓ |
+| 13   | Дашборд: бэкенд | ✓ |
+| 14   | Дашборд: фронт + справка | ✓ |
+| 15   | Docker + Cloudflare doc | ✓ |

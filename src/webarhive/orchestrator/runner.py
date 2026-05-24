@@ -30,9 +30,9 @@ import httpx
 from sqlalchemy import update
 from sqlalchemy.ext.asyncio import async_sessionmaker
 
-from webarhive.analysis.drops import find_gaps, score_drops
+from webarhive.analysis.drops import find_gaps, score_drops, smart_drop_assess
 from webarhive.analysis.history import summarize_history
-from webarhive.analysis.redirects import RedirectInfo, analyze_redirects
+from webarhive.analysis.redirects import RedirectInfo, analyze_redirects, llm_refine_redirects
 from webarhive.analysis.topics import TopicResult, classify_topics
 from webarhive.analysis.verdict import make_verdict
 from webarhive.cdx.client import CdxClient
@@ -182,6 +182,20 @@ async def process_domain(
                 source_domain=domain_row.domain,
                 fetcher=fetcher,
             )
+            if roles.get("redirect_llm") and llm is not None and redirects:
+                # spec §9.3: only borderline (REVIEW) cases get the LLM tiebreaker
+                source_topic = {
+                    "domain": domain_row.domain,
+                    "categories": [e.category for e in topic_result.epochs],
+                }
+                redirects = await llm_refine_redirects(
+                    redirects,
+                    source_topic=source_topic,
+                    llm=llm,
+                    model=models["redirect"],
+                    fetcher=fetcher,
+                )
+                tracer.info("LLM-уточнение редиректов выполнено")
 
         # --- Drops: feed gap-detection both 200-versions and 404 markers ---
         gap_times: list[datetime] = [v.captured_at for v in topic_result.versions]
@@ -193,6 +207,11 @@ async def process_domain(
         drop_signals = score_drops(gaps, topic_result.epochs)
         if gaps:
             tracer.info(f"дропы: разрывов {len(gaps)}, оценено {sum(1 for d in drop_signals if d.is_drop)}")
+        if roles.get("smart_drop") and llm is not None and drop_signals:
+            drop_signals = await smart_drop_assess(
+                drop_signals, llm=llm, model=models["smart_drop"],
+            )
+            tracer.info("LLM-оценка дропов выполнена")
 
         # --- Verdict ---
         verdict_result = await make_verdict(

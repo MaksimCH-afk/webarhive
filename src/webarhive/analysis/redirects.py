@@ -31,6 +31,8 @@ from webarhive.cdx.client import CdxRow
 from webarhive.db.models import RedirectClass
 from webarhive.fetcher.parser import parse_html
 from webarhive.fetcher.snapshot import SnapshotFetcher, snapshot_url
+from webarhive.llm.client import OpenRouterClient
+from webarhive.llm.prompts import build_redirect_prompt
 
 logger = logging.getLogger(__name__)
 
@@ -225,3 +227,45 @@ async def analyze_redirects(
             snapshot_url=human_snap,
         ))
     return results
+
+
+async def llm_refine_redirects(
+    redirects: Sequence[RedirectInfo],
+    *,
+    source_topic: dict,
+    llm: OpenRouterClient,
+    model: str,
+    fetcher: SnapshotFetcher,
+) -> list[RedirectInfo]:
+    """Spec §9.3 — only on REVIEW-class borderline cases. Asks the model
+    'same site / company move / hijack' based on topic of both sides;
+    safety default §7.1 preserved: uncertain → stays REVIEW."""
+    out: list[RedirectInfo] = []
+    for r in redirects:
+        if r.classification is not RedirectClass.REVIEW or not r.to_url:
+            out.append(r)
+            continue
+        # We don't have topic for target without a CDX lookup over there;
+        # fall back to passing whatever we know (target domain + URL).
+        target_topic = {"domain": r.target_domain, "url": r.to_url}
+        sys_p, usr_p = build_redirect_prompt(from_topic=source_topic, to_topic=target_topic)
+        resp = await llm.chat_json(model=model, system_prompt=sys_p, user_prompt=usr_p)
+        parsed = resp.parsed or {}
+        relation = str(parsed.get("relation", "")).lower()
+        mapping = {
+            "тот_же_сайт": RedirectClass.SAME_SITE,
+            "переезд_компании": RedirectClass.COMPANY_MOVE,
+            # `перехват` → keep REVIEW
+        }
+        new_cls = mapping.get(relation, RedirectClass.REVIEW)
+        new_reason = parsed.get("reason") if isinstance(parsed.get("reason"), str) else r.reason
+        out.append(RedirectInfo(
+            captured_at=r.captured_at,
+            from_url=r.from_url,
+            to_url=r.to_url,
+            target_domain=r.target_domain,
+            classification=new_cls,
+            reason=f"LLM: {new_reason}" if new_reason else r.reason,
+            snapshot_url=r.snapshot_url,
+        ))
+    return out

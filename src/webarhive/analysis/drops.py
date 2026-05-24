@@ -21,6 +21,8 @@ from datetime import datetime, timedelta
 from typing import Sequence
 
 from webarhive.analysis.topics import TopicEpoch
+from webarhive.llm.client import OpenRouterClient
+from webarhive.llm.prompts import build_smart_drop_prompt
 
 DROP_MIN_GAP_DAYS = 365  # spec mentions "year-two" silence
 
@@ -136,3 +138,42 @@ def score_drops(
                 reason=f"разрыв {gap.days} дн., тематика сохранилась",
             ))
     return signals
+
+
+async def smart_drop_assess(
+    signals: Sequence[DropSignal],
+    *,
+    llm: OpenRouterClient,
+    model: str,
+) -> list[DropSignal]:
+    """Spec §9.2 — only runs on already-suspicious gaps (is_drop=True
+    OR category change unverifiable). Asks the model to confirm/deny
+    based on the topics on both sides; replaces source="heuristic" with
+    "llm" and updates confidence/reason. No-op on gaps that look
+    clearly not-a-drop."""
+    out: list[DropSignal] = []
+    for s in signals:
+        if not s.is_drop and (s.category_before == s.category_after):
+            out.append(s)
+            continue
+        sys_p, usr_p = build_smart_drop_prompt(
+            before={"category": s.category_before},
+            after={"category": s.category_after},
+            gap_days=s.gap_days,
+        )
+        resp = await llm.chat_json(model=model, system_prompt=sys_p, user_prompt=usr_p)
+        parsed = resp.parsed or {}
+        is_drop = bool(parsed.get("is_drop", s.is_drop))
+        conf = parsed.get("confidence")
+        try:
+            conf_f = float(conf) if conf is not None else s.confidence
+        except (TypeError, ValueError):
+            conf_f = s.confidence
+        reason = parsed.get("reason") if isinstance(parsed.get("reason"), str) else s.reason
+        out.append(DropSignal(
+            gap_from=s.gap_from, gap_to=s.gap_to, gap_days=s.gap_days,
+            category_before=s.category_before, category_after=s.category_after,
+            is_drop=is_drop, confidence=conf_f, reason=reason or s.reason,
+            source="llm",
+        ))
+    return out

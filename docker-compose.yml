@@ -1,0 +1,17 @@
+services:
+  webarhive:
+    build: .
+    container_name: webarhive
+    restart: unless-stopped
+    env_file: .env
+    # Bind only to loopback — operator exposes via Cloudflare Tunnel
+    # per spec §17 (no open port outward).
+    ports:
+      - "127.0.0.1:8000:8000"
+    volumes:
+      - ./data:/app/data
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8000/help"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
