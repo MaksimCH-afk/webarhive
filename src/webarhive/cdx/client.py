@@ -1,0 +1,200 @@
+"""CDX Server API client (spec §3.1).
+
+Fetches the index of all captures for a domain without downloading
+pages. Supports matchType=domain (default, captures the whole tree
+including www and subdomains and inner pages) or matchType=host (only
+that hostname — used when CHECK_SUBDOMAINS is on, §2.4).
+
+Primary dedup is server-side via collapse=urlkey+digest: identical
+content under the same URL is collapsed; different URLs stay. Further
+version-level collapsing for topic analysis happens in analysis/.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import logging
+from dataclasses import dataclass
+from typing import AsyncIterator, Literal
+
+import httpx
+from tenacity import (
+    AsyncRetrying,
+    retry_if_exception_type,
+    stop_after_attempt,
+    wait_exponential,
+)
+
+from webarhive.cdx.throttle import IAThrottle
+
+logger = logging.getLogger(__name__)
+
+CDX_URL = "http://web.archive.org/cdx/search/cdx"
+DEFAULT_FIELDS = ("urlkey", "timestamp", "original", "mimetype", "statuscode", "digest", "length")
+PAGE_LIMIT = 5000  # rows per page; resumeKey paginates further
+
+
+@dataclass(frozen=True, slots=True)
+class CdxRow:
+    urlkey: str
+    timestamp: str  # YYYYMMDDhhmmss
+    original: str  # full URL
+    mimetype: str
+    statuscode: str  # may be empty string in CDX
+    digest: str
+    length: str
+
+    @classmethod
+    def from_list(cls, row: list[str]) -> "CdxRow":
+        return cls(
+            urlkey=row[0],
+            timestamp=row[1],
+            original=row[2],
+            mimetype=row[3],
+            statuscode=row[4],
+            digest=row[5],
+            length=row[6] if len(row) > 6 else "",
+        )
+
+    @property
+    def status_bucket(self) -> Literal["200", "3xx", "404", "5xx", "other"]:
+        sc = self.statuscode
+        if not sc or not sc.isdigit():
+            return "other"
+        code = int(sc)
+        if code == 200:
+            return "200"
+        if 300 <= code < 400:
+            return "3xx"
+        if code == 404:
+            return "404"
+        if 500 <= code < 600:
+            return "5xx"
+        return "other"
+
+
+class CdxClient:
+    """Async client for CDX Server API with shared IA throttle + backoff."""
+
+    def __init__(
+        self,
+        *,
+        throttle: IAThrottle,
+        client: httpx.AsyncClient | None = None,
+        max_retries: int = 5,
+        backoff_base: float = 2.0,
+        timeout: float = 60.0,
+    ) -> None:
+        self._throttle = throttle
+        self._client = client or httpx.AsyncClient(
+            timeout=timeout,
+            headers={"User-Agent": "webarhive-checker/0.1 (+internal)"},
+        )
+        self._owns_client = client is None
+        self._max_retries = max_retries
+        self._backoff_base = backoff_base
+
+    async def aclose(self) -> None:
+        if self._owns_client:
+            await self._client.aclose()
+
+    async def __aenter__(self) -> "CdxClient":
+        return self
+
+    async def __aexit__(self, *exc) -> None:
+        await self.aclose()
+
+    async def _get(self, params: dict) -> httpx.Response:
+        await self._throttle.acquire()
+        retryer = AsyncRetrying(
+            stop=stop_after_attempt(self._max_retries),
+            wait=wait_exponential(multiplier=self._backoff_base, min=self._backoff_base, max=60),
+            retry=retry_if_exception_type((httpx.HTTPError, asyncio.TimeoutError)),
+            reraise=True,
+        )
+        async for attempt in retryer:
+            with attempt:
+                resp = await self._client.get(CDX_URL, params=params)
+                # Retry on 429/5xx
+                if resp.status_code in (429,) or 500 <= resp.status_code < 600:
+                    logger.warning(
+                        "CDX throttled/failed status=%s for params=%s — backing off",
+                        resp.status_code,
+                        params.get("url"),
+                    )
+                    raise httpx.HTTPStatusError(
+                        "retryable", request=resp.request, response=resp
+                    )
+                resp.raise_for_status()
+                return resp
+        raise RuntimeError("unreachable")  # pragma: no cover
+
+    async def iter_captures(
+        self,
+        domain: str,
+        *,
+        match_type: Literal["domain", "host"] = "domain",
+        fields: tuple[str, ...] = DEFAULT_FIELDS,
+        page_limit: int = PAGE_LIMIT,
+    ) -> AsyncIterator[CdxRow]:
+        """Stream CDX rows for a domain, paginating via resumeKey.
+
+        Server-side dedup is enabled via collapse=urlkey + collapse=digest:
+        identical content under same URL is collapsed. Different URLs stay.
+        """
+        params: dict[str, str | int] = {
+            "url": domain,
+            "matchType": match_type,
+            "output": "json",
+            "fl": ",".join(fields),
+            "collapse": "digest",  # primary collapse — same content collapsed
+            "limit": page_limit,
+            "showResumeKey": "true",
+        }
+        resume_key: str | None = None
+        page_no = 0
+
+        while True:
+            if resume_key:
+                params["resumeKey"] = resume_key
+            resp = await self._get(params)
+            data = resp.json() if resp.content else []
+            if not data:
+                return
+
+            # First row of first page is the header. Subsequent pages
+            # don't repeat the header when resumeKey is used.
+            rows = data
+            if page_no == 0:
+                rows = data[1:]  # drop header
+            page_no += 1
+
+            # Find resume key. CDX appends it as:
+            # [..., [], ["resume_key_value"]] at the end of the page.
+            next_resume: str | None = None
+            cleaned: list[list[str]] = []
+            for row in rows:
+                if not row:
+                    continue
+                if len(row) == 1:
+                    next_resume = row[0]
+                    continue
+                cleaned.append(row)
+
+            for row in cleaned:
+                try:
+                    yield CdxRow.from_list(row)
+                except (IndexError, TypeError):
+                    logger.debug("malformed CDX row skipped: %r", row)
+
+            if not next_resume:
+                return
+            resume_key = next_resume
+
+    async def fetch_all(
+        self,
+        domain: str,
+        *,
+        match_type: Literal["domain", "host"] = "domain",
+    ) -> list[CdxRow]:
+        return [r async for r in self.iter_captures(domain, match_type=match_type)]
