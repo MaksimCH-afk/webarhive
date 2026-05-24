@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>{% block title %}webarhive{% endblock %}</title>
+  <link rel="stylesheet" href="/static/css/app.css">
+  <script src="https://unpkg.com/htmx.org@1.9.12" defer></script>
+  <script src="https://unpkg.com/lucide@latest" defer></script>
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="/">webarhive</a>
+    <nav>
+      <a href="/" class="navlink">Прогоны</a>
+      <a href="/settings" class="navlink">Настройки</a>
+      <a href="/help" class="navlink">Справка</a>
+    </nav>
+  </header>
+  <main class="page">
+    {% block content %}{% endblock %}
+  </main>
+  <script>document.addEventListener("DOMContentLoaded", () => { if (window.lucide) lucide.createIcons(); });</script>
+</body>
+</html>

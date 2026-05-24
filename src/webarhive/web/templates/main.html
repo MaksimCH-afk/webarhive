@@ -1,0 +1,86 @@
+{% extends "base.html" %}
+{% block title %}Прогоны — webarhive{% endblock %}
+{% block content %}
+
+<section class="card stack">
+  <div class="row-between">
+    <h1 class="h1">Прогоны</h1>
+    <button class="btn primary" onclick="document.getElementById('launch-panel').open=true">Новый прогон</button>
+  </div>
+
+  {% if not runs %}
+  <div class="empty">
+    <p class="muted">Прогонов ещё нет.</p>
+    <p>Этот инструмент проверяет «чистоту» и историю доменов по данным Internet Archive (Wayback Machine). Загрузите список доменов — увидите по каждому возраст, тематику во времени, редиректы и опциональный вердикт.</p>
+    <button class="btn primary" onclick="document.getElementById('launch-panel').open=true">Загрузить домены / Запустить первый прогон</button>
+  </div>
+  {% else %}
+  <table class="dense">
+    <thead><tr>
+      <th>Дата</th>
+      <th>Статус</th>
+      <th>Домены</th>
+      <th>Чистые</th>
+      <th>Нюансы</th>
+      <th>Грязные</th>
+      <th>Ошибки</th>
+      <th>Модель класс.</th>
+      <th>Заметка</th>
+    </tr></thead>
+    <tbody>
+    {% for r in runs %}
+      <tr class="clickable" onclick="location.href='/runs/{{ r.id }}'">
+        <td class="mono">{{ r.started_at.strftime('%Y-%m-%d %H:%M') }}</td>
+        <td><span class="badge {{ r.status }}">{{ r.status }}</span></td>
+        <td class="num">{{ r.processed_domains }}/{{ r.total_domains }}</td>
+        <td class="num verdict-clean">{{ r.clean_count }}</td>
+        <td class="num verdict-nuanced">{{ r.nuanced_count }}</td>
+        <td class="num verdict-dirty">{{ r.dirty_count }}</td>
+        <td class="num">{{ r.error_count }}</td>
+        <td class="mono small">{{ r.settings_snapshot.get('models',{}).get('classification','') }}</td>
+        <td class="small">{{ r.note or '' }}</td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  {% endif %}
+</section>
+
+<details id="launch-panel" class="card stack">
+  <summary class="h2">Новый прогон</summary>
+  <form id="upload-form" hx-post="/api/upload" hx-target="#preview" hx-encoding="multipart/form-data">
+    <label class="label">Список доменов (по строке, можно через запятую):</label>
+    <textarea name="text" rows="8" placeholder="example.com&#10;blog.foo.co.uk&#10;..."></textarea>
+    <label class="label">или файл (.txt / .csv / .xlsx, первый столбец):</label>
+    <input type="file" name="file" accept=".txt,.csv,.xlsx">
+    <button class="btn" type="submit">Проверить ввод</button>
+  </form>
+  <div id="preview" class="stack"></div>
+</details>
+
+<script>
+  document.body.addEventListener('htmx:afterRequest', (ev) => {
+    if (ev.detail.elt && ev.detail.elt.id === 'upload-form' && ev.detail.successful) {
+      const r = JSON.parse(ev.detail.xhr.responseText);
+      const validList = r.valid_unique.join('\n');
+      const rejBlock = r.rejected.length
+        ? `<details><summary>Отброшено: ${r.dropped}</summary><ul class="mono small">${r.rejected.map(x => `<li>${x.original} — ${x.reason}</li>`).join('')}</ul></details>`
+        : '';
+      document.getElementById('preview').innerHTML = `
+        <div class="report">
+          Загружено строк <b>${r.raw_lines}</b> →
+          валидных уникальных <b>${r.valid_unique.length}</b> →
+          отброшено <b>${r.dropped}</b>
+        </div>
+        ${rejBlock}
+        <form hx-post="/api/runs" hx-trigger="submit" hx-swap="none"
+              hx-on::after-request="if(event.detail.successful){location.href=JSON.parse(event.detail.xhr.responseText).redirect}">
+          <input type="hidden" name="domains" value="${validList.replace(/"/g,'&quot;')}">
+          <label class="label">Заметка к прогону (опционально):</label>
+          <input type="text" name="note" placeholder="например: тест gpt-4o-mini против haiku">
+          <button class="btn primary" type="submit">Запустить прогон по ${r.valid_unique.length} доменам</button>
+        </form>`;
+    }
+  });
+</script>
+{% endblock %}

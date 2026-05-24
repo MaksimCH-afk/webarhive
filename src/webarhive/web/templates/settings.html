@@ -1,0 +1,19 @@
+{% extends "base.html" %}
+{% block title %}Настройки — webarhive{% endblock %}
+{% block content %}
+<section class="card stack prose">
+  <h1 class="h1">Настройки</h1>
+  <p class="muted">Глобальные настройки управляются через env-файл. При запуске прогона снимок настроек копируется в запись прогона — в истории видно, на каких параметрах считался конкретный прогон.</p>
+
+  <h2 class="h2">Текущий снимок</h2>
+  <pre class="mono small">{{ settings.snapshot()|tojson(indent=2) }}</pre>
+
+  <h2 class="h2">Секреты</h2>
+  <div class="kv"><span>OPENROUTER_API_KEY</span><b>{% if settings.openrouter_api_key %}✓ задан ({{ settings.openrouter_api_key[:6] }}…){% else %}<span class="verdict-dirty">не задан — классификация и вердикт не сработают</span>{% endif %}</b></div>
+
+  <h2 class="h2">Развёртывание</h2>
+  <div class="kv"><span>APP_DOMAIN</span><b class="mono">{{ settings.app_domain }}</b></div>
+  <div class="kv"><span>TRUST_PROXY_HEADERS</span><b>{{ 'да' if settings.trust_proxy_headers else 'нет' }}</b></div>
+  <p class="small muted">Дашборд предназначен для работы за Cloudflare Tunnel + Cloudflare Access. Внутренней авторизации нет — закрывается на периметре.</p>
+</section>
+{% endblock %}

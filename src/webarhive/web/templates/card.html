@@ -1,0 +1,165 @@
+{% extends "base.html" %}
+{% block title %}{{ domain.domain }} — webarhive{% endblock %}
+{% block content %}
+
+<section class="card">
+  <div class="row-between">
+    <div>
+      <a href="/runs/{{ run.id }}" class="muted small">← прогон #{{ run.id }}</a>
+      <h1 class="h1 mono">{{ domain.domain }}</h1>
+    </div>
+    {% if domain.verdict %}
+    <span class="verdict-badge v-{{ domain.verdict }} big">
+      {% if domain.verdict == 'clean' %}<i data-lucide="check"></i> чистый
+      {% elif domain.verdict == 'nuanced' %}<i data-lucide="alert-triangle"></i> есть нюансы
+      {% else %}<i data-lucide="octagon-x"></i> грязный{% endif %}
+    </span>
+    {% else %}<span class="badge nodata">вердикт не выставлен</span>{% endif %}
+  </div>
+</section>
+
+<!-- A: Result -->
+<section class="card stack">
+  <h2 class="h2">Результат</h2>
+  {% if domain.verdict_reason %}
+  <div class="bubble"><b>Обоснование:</b> {{ domain.verdict_reason }}</div>
+  {% endif %}
+  {% if domain.verdict_key_flags %}
+  <div class="row gap small">
+    {% for f in domain.verdict_key_flags %}<span class="chip">{{ f }}</span>{% endfor %}
+  </div>
+  {% endif %}
+
+  <h3 class="h3">Лента эпох</h3>
+  {% if epochs %}
+  <div class="timeline">
+    {% set min_start = epochs[0].period_from.timestamp() %}
+    {% set max_end = epochs[-1].period_to.timestamp() %}
+    {% set span = (max_end - min_start) or 1 %}
+    {% for e in epochs %}
+      {% set width = ((e.period_to.timestamp() - e.period_from.timestamp()) / span * 100) %}
+      {% if width < 4 %}{% set width = 4 %}{% endif %}
+      <div class="epoch group-{{ e.category|category_group }}{% if is_risky(e.category) %} risky{% endif %}"
+           style="flex: {{ width }};"
+           title="{{ e.period_from.strftime('%Y-%m-%d') }} — {{ e.period_to.strftime('%Y-%m-%d') }} · {{ e.category|category_label }}{% if e.confidence %} · уверенность {{ '%.2f'|format(e.confidence) }}{% endif %}{% if e.reason %}&#10;{{ e.reason }}{% endif %}">
+        <i data-lucide="{{ e.category|category_icon }}"></i>
+        <span class="small">{{ e.category|category_label }}</span>
+      </div>
+    {% endfor %}
+  </div>
+  <details class="small"><summary>Детали по эпохам</summary>
+    <table class="dense">
+      <thead><tr><th>с</th><th>по</th><th>категория</th><th>увер.</th><th>версий</th><th>reason</th><th>снапшот</th></tr></thead>
+      <tbody>
+      {% for e in epochs %}
+      <tr>
+        <td class="mono">{{ e.period_from.strftime('%Y-%m-%d') }}</td>
+        <td class="mono">{{ e.period_to.strftime('%Y-%m-%d') }}</td>
+        <td><i data-lucide="{{ e.category|category_icon }}" class="ic"></i> {{ e.category|category_label }}</td>
+        <td class="num">{% if e.confidence %}{{ '%.2f'|format(e.confidence) }}{% endif %}</td>
+        <td class="num">{{ e.versions_in_epoch }}</td>
+        <td class="small">{{ e.reason or '' }}</td>
+        <td><a class="small mono" href="{{ e.sample_snapshot_url }}" target="_blank" rel="noopener">открыть</a></td>
+      </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </details>
+  {% else %}<div class="muted">эпох нет</div>{% endif %}
+
+  <h3 class="h3">Редиректы</h3>
+  {% if redirects %}
+  <table class="dense">
+    <thead><tr><th>дата</th><th>откуда</th><th>куда</th><th>цель</th><th>класс</th><th>причина</th><th>слепок</th></tr></thead>
+    <tbody>
+    {% for r in redirects %}
+      <tr class="redir-{{ r.classification }}">
+        <td class="mono small">{{ r.captured_at.strftime('%Y-%m-%d') }}</td>
+        <td class="mono small clip">{{ r.from_url }}</td>
+        <td class="mono small clip">{{ r.to_url or '—' }}</td>
+        <td class="mono small">{{ r.target_domain or '—' }}</td>
+        <td>
+          {% if r.classification == 'same_site' %}<span class="badge ok">тот же сайт</span>
+          {% elif r.classification == 'company_move' %}<span class="badge ok">переезд</span>
+          {% elif r.classification == 'review' %}<span class="badge review"><i data-lucide="search"></i> обратить внимание</span>
+          {% else %}<span class="badge muted">{{ r.classification }}</span>{% endif %}
+        </td>
+        <td class="small">{{ r.reason or '' }}</td>
+        <td>{% if r.snapshot_url %}<a class="small mono" href="{{ r.snapshot_url }}" target="_blank" rel="noopener">открыть</a>{% endif %}</td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  {% else %}<div class="muted">редиректов нет</div>{% endif %}
+</section>
+
+<!-- B: Context -->
+<section class="card stack">
+  <h2 class="h2">Контекст</h2>
+  <div class="grid-2 small">
+    <div>
+      <div class="kv"><span>возраст в архиве</span><b>{{ domain.age_days }} дн</b></div>
+      <div class="kv"><span>первый захват</span><b class="mono">{{ domain.first_capture_at.strftime('%Y-%m-%d') if domain.first_capture_at else '—' }}</b></div>
+      <div class="kv"><span>последний захват</span><b class="mono">{{ domain.last_capture_at.strftime('%Y-%m-%d') if domain.last_capture_at else '—' }}</b></div>
+    </div>
+    <div>
+      <div class="kv"><span>всего захватов</span><b>{{ domain.total_captures }}</b></div>
+      <div class="kv"><span>версий после схлопывания</span><b>{{ domain.total_versions }}</b></div>
+      <div class="kv"><span>статус</span><b><span class="badge {{ domain.status }}">{{ domain.status }}</span></b></div>
+    </div>
+  </div>
+
+  <h3 class="h3">Предполагаемые дропы <span class="chip muted small">эвристика</span></h3>
+  {% if drops %}
+  <table class="dense">
+    <thead><tr><th>разрыв с</th><th>по</th><th>дней</th><th>было</th><th>стало</th><th>дроп?</th><th>увер.</th><th>источник</th><th>reason</th></tr></thead>
+    <tbody>
+    {% for d in drops %}
+    <tr>
+      <td class="mono small">{{ d.gap_from.strftime('%Y-%m-%d') }}</td>
+      <td class="mono small">{{ d.gap_to.strftime('%Y-%m-%d') }}</td>
+      <td class="num">{{ d.gap_days }}</td>
+      <td class="small">{{ d.category_before|category_label if d.category_before else '—' }}</td>
+      <td class="small">{{ d.category_after|category_label if d.category_after else '—' }}</td>
+      <td>{% if d.is_drop %}<span class="badge review">да</span>{% else %}<span class="muted">нет</span>{% endif %}</td>
+      <td class="num">{% if d.confidence %}{{ '%.2f'|format(d.confidence) }}{% endif %}</td>
+      <td class="small">{{ d.source }}</td>
+      <td class="small">{{ d.reason }}</td>
+    </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  {% else %}<div class="muted">подозрительных разрывов не найдено</div>{% endif %}
+</section>
+
+<!-- C: Under the hood (collapsed by default) -->
+<details class="card">
+  <summary class="h2">Под капот · логи и аудит</summary>
+  <h3 class="h3">Лог проверки</h3>
+  <p class="small"><a class="btn small" href="/domains/{{ domain.id }}/trace.txt">Скачать .txt</a></p>
+  <pre class="trace">{{ domain.trace or '(пусто)' }}</pre>
+
+  <h3 class="h3">Аудит вызовов LLM</h3>
+  {% if llm_calls %}
+  <table class="dense">
+    <thead><tr><th>время</th><th>роль</th><th>модель</th><th>токены</th><th>стоимость</th><th>latency</th><th>output</th><th>raw</th><th>input</th></tr></thead>
+    <tbody>
+    {% for c in llm_calls %}
+    <tr>
+      <td class="mono small">{{ c.created_at.strftime('%H:%M:%S') }}</td>
+      <td class="small">{{ c.role }}</td>
+      <td class="mono small">{{ c.model }}</td>
+      <td class="num small">{{ c.prompt_tokens or '?' }}/{{ c.completion_tokens or '?' }}</td>
+      <td class="num small">{% if c.cost_usd %}${{ '%.5f'|format(c.cost_usd) }}{% endif %}</td>
+      <td class="num small">{{ c.latency_ms }}ms</td>
+      <td class="small mono clip" title="{{ c.output }}">{{ c.output }}</td>
+      <td class="small">{% if c.raw_output and not c.output %}<details><summary>raw</summary><pre class="small">{{ c.raw_output }}</pre></details>{% endif %}</td>
+      <td><a class="small" href="/api/llm_calls/{{ c.id }}/input.txt" target="_blank">input</a></td>
+    </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  {% else %}<div class="muted">вызовов LLM не было</div>{% endif %}
+</details>
+
+{% endblock %}
