@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 from logging.config import fileConfig
+from pathlib import Path
 
 from alembic import context
 from sqlalchemy import engine_from_config, pool
@@ -20,6 +21,14 @@ env_url = os.environ.get("DATABASE_URL")
 if env_url:
     env_url = env_url.replace("+aiosqlite", "").replace("+asyncpg", "")
     config.set_main_option("sqlalchemy.url", env_url)
+
+# Ensure the parent directory exists for SQLite file paths — saves the
+# operator from "unable to open database file" on a fresh deploy.
+final_url = config.get_main_option("sqlalchemy.url") or ""
+if final_url.startswith("sqlite:///"):
+    db_path = final_url[len("sqlite:///"):].split("?", 1)[0]
+    if db_path and db_path != ":memory:":
+        Path(db_path).parent.mkdir(parents=True, exist_ok=True)
 
 target_metadata = Base.metadata
 
