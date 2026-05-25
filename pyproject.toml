@@ -41,6 +41,15 @@ webarhive = "webarhive.cli:main"
 [tool.setuptools.packages.find]
 where = ["src"]
 
+# Non-Python data files that must travel with the installed package.
+# Without this, `pip install` copies only .py files and the FastAPI app
+# crashes on startup looking for /usr/.../webarhive/web/static.
+[tool.setuptools.package-data]
+webarhive = [
+    "web/templates/*.html",
+    "web/static/**/*",
+]
+
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
