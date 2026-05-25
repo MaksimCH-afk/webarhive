@@ -18,6 +18,14 @@ COPY alembic ./alembic
 
 RUN pip install --no-cache-dir .
 
+# Sanity check: package-data must include templates + static, otherwise
+# the app crashes at boot with "Directory does not exist". Fail the
+# build loudly here instead of surfacing a confusing runtime traceback.
+RUN python -c "import os, webarhive; p = os.path.dirname(webarhive.__file__); \
+    assert os.path.isdir(p + '/web/templates'), 'templates missing from wheel'; \
+    assert os.path.isdir(p + '/web/static'), 'static missing from wheel'; \
+    print('package-data OK:', os.listdir(p + '/web/templates'))"
+
 RUN mkdir -p /app/data
 VOLUME ["/app/data"]
 

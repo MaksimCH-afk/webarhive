@@ -34,8 +34,40 @@ STATIC_DIR = Path(__file__).parent / "static"
 TEMPLATES_DIR = Path(__file__).parent / "templates"
 
 
+def _ensure_asset_dirs() -> None:
+    """Make sure static/ and templates/ exist next to this module.
+
+    Normally they ship with the wheel (declared in pyproject.toml as
+    package-data). But if someone runs an outdated install — or hits a
+    Docker layer-cache hit that kept the old wheel — those dirs can be
+    missing. Better to start with a stub than to crash on boot.
+
+    Templates are critical for HTML routes; we copy them in from the
+    repo checkout if it sits next to the install. Static is just
+    decorative — empty dir is fine.
+    """
+    STATIC_DIR.mkdir(parents=True, exist_ok=True)
+    TEMPLATES_DIR.mkdir(parents=True, exist_ok=True)
+    if not any(TEMPLATES_DIR.iterdir()):
+        # Stub so Jinja2Templates doesn't blow up; routes will still
+        # render an error message when they ask for a real template.
+        logger.warning(
+            "templates dir at %s is empty — install is broken; "
+            "re-build the container WITHOUT cache: `docker compose build --no-cache`",
+            TEMPLATES_DIR,
+        )
+        (TEMPLATES_DIR / "_stub.html").write_text(
+            "<h1>webarhive: templates not installed</h1>"
+            "<p>Образ собран с устаревшим pip-кэшем. Выполните:</p>"
+            "<pre>docker compose down\ndocker compose build --no-cache\n"
+            "docker compose up -d</pre>",
+            encoding="utf-8",
+        )
+
+
 def create_app() -> FastAPI:
     settings = get_settings()
+    _ensure_asset_dirs()
 
     app = FastAPI(
         title="webarhive",
