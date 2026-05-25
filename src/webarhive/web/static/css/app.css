@@ -826,6 +826,36 @@ textarea.input {
 }
 .tooltip-host:hover .tooltip { opacity: 1; }
 
+/* широкая подсказка для help-точки в форме настроек: с переносами */
+.tooltip--wide {
+  white-space: normal;
+  width: 240px;
+  text-align: left;
+  font-size: 12px;
+  line-height: 1.45;
+  padding: 8px 10px;
+}
+
+/* кликабельная (точнее, hover-able) точка-знак-вопрос у поля настройки */
+.help-dot {
+  display: inline-grid;
+  place-items: center;
+  width: 16px; height: 16px;
+  border-radius: 999px;
+  border: 1px solid var(--border-strong);
+  color: var(--text-3);
+  font-size: 11px;
+  font-weight: 600;
+  cursor: help;
+  background: transparent;
+  flex-shrink: 0;
+  margin-left: 6px;
+  vertical-align: -3px;
+  padding: 0;
+}
+.help-dot:hover { color: var(--accent); border-color: var(--accent); background: var(--accent-soft); }
+.field__lbl-row { display: inline-flex; align-items: center; gap: 0; }
+
 /* small dots row separator inside flag cells */
 .no-flags { color: var(--text-3); font-size: 12px; }
 

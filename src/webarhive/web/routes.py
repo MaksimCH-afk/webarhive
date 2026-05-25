@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+from datetime import datetime
 from typing import Annotated
 
 from fastapi import APIRouter, File, Form, HTTPException, Query, Request, UploadFile
@@ -390,6 +391,10 @@ async def api_run_stream(run_id: int):
 
 @api_router.post("/runs/{run_id}/abort")
 async def api_abort_run(request: Request, run_id: int):
+    """Остановить прогон. Не дошедшие до него домены остаются с
+    отметкой «не проверен» (status=no_data) — чтобы было видно, что
+    их остановили, а не успешно проверили."""
+    from sqlalchemy import update as sa_update
     task = request.app.state.pipeline_tasks.pop(run_id, None)
     if task is not None and not task.done():
         task.cancel()
@@ -398,6 +403,23 @@ async def api_abort_run(request: Request, run_id: int):
         if run is None:
             raise HTTPException(404)
         run.status = RunStatus.ABORTED.value
+        run.finished_at = datetime.utcnow()
+        # сбрасываем все висящие pending/running домены
+        await s.execute(
+            sa_update(Domain)
+            .where(
+                Domain.run_id == run_id,
+                Domain.status.in_([
+                    DomainStatus.PENDING.value,
+                    DomainStatus.RUNNING.value,
+                ]),
+            )
+            .values(
+                status=DomainStatus.NO_DATA.value,
+                error_message="прогон остановлен оператором",
+                finished_at=datetime.utcnow(),
+            )
+        )
         await s.commit()
     return JSONResponse({"status": "aborted"})
 

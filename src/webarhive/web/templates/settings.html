@@ -1,5 +1,6 @@
 {% extends "base.html" %}
 {% from "_icons.html" import icon %}
+{% from "_components.html" import help_dot %}
 {% block title %}Настройки — Web Archive Checker{% endblock %}
 {% block content %}
 
@@ -28,10 +29,22 @@
         <span class="muted" style="font-size:12px">формат OpenRouter: <code>провайдер/модель</code> (см. справку ниже)</span>
       </div>
       <div class="form-grid">
-        <div class="field"><label class="field__lbl">classification (основная)</label><input class="input" name="model_classification" value="{{ fields.model_classification }}"></div>
-        <div class="field"><label class="field__lbl">verdict</label><input class="input" name="model_verdict" value="{{ fields.model_verdict }}"></div>
-        <div class="field"><label class="field__lbl">smart_drop</label><input class="input" name="model_smart_drop" value="{{ fields.model_smart_drop }}"></div>
-        <div class="field"><label class="field__lbl">redirect</label><input class="input" name="model_redirect" value="{{ fields.model_redirect }}"></div>
+        <div class="field">
+          <label class="field__lbl">classification (основная){{ help_dot("Определяет тематику каждой версии (200-снапшота). Вызывается чаще всех — лучше дешёвая и быстрая модель: openai/gpt-4o-mini или google/gemini-2.0-flash-001.") }}</label>
+          <input class="input" name="model_classification" value="{{ fields.model_classification }}">
+        </div>
+        <div class="field">
+          <label class="field__lbl">verdict{{ help_dot("Финальный вердикт по домену (чистый/нюансы/грязный) поверх всей собранной картины. Один вызов на домен. Можно ставить умную модель: anthropic/claude-sonnet-4.5.") }}</label>
+          <input class="input" name="model_verdict" value="{{ fields.model_verdict }}">
+        </div>
+        <div class="field">
+          <label class="field__lbl">smart_drop{{ help_dot("Оценивает подозрительные разрывы в истории — дроп или эволюция того же сайта. Вызывается только на найденных гэпах.") }}</label>
+          <input class="input" name="model_smart_drop" value="{{ fields.model_smart_drop }}">
+        </div>
+        <div class="field">
+          <label class="field__lbl">redirect{{ help_dot("Уточняет «свой/переезд/перехват» для пограничных редиректов на основе тематики обеих сторон. Дополнительно фетчит цель — может ускорять расход бюджета.") }}</label>
+          <input class="input" name="model_redirect" value="{{ fields.model_redirect }}">
+        </div>
       </div>
       <details class="muted" style="font-size:12px">
         <summary style="cursor:pointer">примеры моделей OpenRouter</summary>
@@ -52,14 +65,17 @@
         <label class="toggle {% if fields.enable_verdict %}toggle--on{% endif %}">
           <input type="checkbox" name="enable_verdict" value="true" {% if fields.enable_verdict %}checked{% endif %} style="display:none" onchange="this.parentNode.classList.toggle('toggle--on', this.checked)">
           <span class="toggle__box"></span><span>финальный вердикт (чистый / нюансы / грязный)</span>
+          {{ help_dot("Если выключено — колонка вердикта на полотне пустая. Ориентир — флаги (рисковые иконки, «обратить внимание»). Сама классификация тематики работает в любом случае.") }}
         </label>
         <label class="toggle {% if fields.enable_smart_drop %}toggle--on{% endif %}">
           <input type="checkbox" name="enable_smart_drop" value="true" {% if fields.enable_smart_drop %}checked{% endif %} style="display:none" onchange="this.parentNode.classList.toggle('toggle--on', this.checked)">
           <span class="toggle__box"></span><span>умное определение дропа</span>
+          {{ help_dot("Без неё работает базовая эвристика «длинный разрыв + смена тематики». Включение усиливает её LLM-оценкой только на уже найденных подозрительных гэпах.") }}
         </label>
         <label class="toggle {% if fields.enable_redirect_llm %}toggle--on{% endif %}">
           <input type="checkbox" name="enable_redirect_llm" value="true" {% if fields.enable_redirect_llm %}checked{% endif %} style="display:none" onchange="this.parentNode.classList.toggle('toggle--on', this.checked)">
           <span class="toggle__box"></span><span>LLM-решение по редиректу</span>
+          {{ help_dot("Уточняет «свой/переезд/перехват» на пограничных REVIEW-редиректах. Для каждого такого редиректа делает дополнительный CDX-запрос на целевой домен — замедляет проверку доменов с длинным списком редиректов.") }}
         </label>
       </div>
     </section>
@@ -68,10 +84,22 @@
     <section class="col gap-3">
       <div class="section-title" style="margin:0">Лимиты и пороги</div>
       <div class="form-grid">
-        <div class="field"><label class="field__lbl">max_llm_calls_per_domain</label><input class="input" type="number" min="1" max="500" name="max_llm_calls_per_domain" value="{{ fields.max_llm_calls_per_domain }}"></div>
-        <div class="field"><label class="field__lbl">cost_budget_per_domain ($)</label><input class="input" type="number" step="0.01" name="cost_budget_per_domain" value="{{ fields.cost_budget_per_domain }}"></div>
-        <div class="field"><label class="field__lbl">text_limit (тело страницы)</label><input class="input" type="number" min="200" max="20000" name="text_limit" value="{{ fields.text_limit }}"></div>
-        <div class="field"><label class="field__lbl">title_shift_threshold</label><input class="input" type="number" min="0" max="20" name="title_shift_threshold" value="{{ fields.title_shift_threshold }}"><div class="field__hint">слов разницы в title+desc+h1 для пересчёта</div></div>
+        <div class="field">
+          <label class="field__lbl">max_llm_calls_per_domain{{ help_dot("Потолок вызовов LLM на один домен. Если у домена аномально много версий — упрёмся в лимит, проверка помечается «частично». Без лимита один домен с тысячей версий может съесть весь бюджет.") }}</label>
+          <input class="input" type="number" min="1" max="500" name="max_llm_calls_per_domain" value="{{ fields.max_llm_calls_per_domain }}">
+        </div>
+        <div class="field">
+          <label class="field__lbl">cost_budget_per_domain ($){{ help_dot("Грубый счётчик стоимости — справочное значение, на жёсткую остановку не влияет (этим занимается лимит вызовов).") }}</label>
+          <input class="input" type="number" step="0.01" name="cost_budget_per_domain" value="{{ fields.cost_budget_per_domain }}">
+        </div>
+        <div class="field">
+          <label class="field__lbl">text_limit (тело страницы){{ help_dot("Сколько символов значимого текста страницы отправлять в LLM на классификацию (после очистки от навигации/футера). title, description и h1 идут сверх этого лимита.") }}</label>
+          <input class="input" type="number" min="200" max="20000" name="text_limit" value="{{ fields.text_limit }}">
+        </div>
+        <div class="field">
+          <label class="field__lbl">title_shift_threshold{{ help_dot("Версия идёт в LLM, только если в title+description+h1 поменялось БОЛЬШЕ N значимых слов (стоп-слова и порядок игнорируются). Дефолт 2 — экономит вызовы на косметических правках.") }}</label>
+          <input class="input" type="number" min="0" max="20" name="title_shift_threshold" value="{{ fields.title_shift_threshold }}">
+        </div>
       </div>
     </section>
 
@@ -79,10 +107,22 @@
     <section class="col gap-3">
       <div class="section-title" style="margin:0">Параллелизм и троттлинг IA</div>
       <div class="form-grid">
-        <div class="field"><label class="field__lbl">concurrency (доменов одновременно)</label><input class="input" type="number" min="1" max="20" name="concurrency" value="{{ fields.concurrency }}"></div>
-        <div class="field"><label class="field__lbl">ia_rate_limit (req/sec)</label><input class="input" type="number" step="0.1" name="ia_rate_limit" value="{{ fields.ia_rate_limit }}"></div>
-        <div class="field"><label class="field__lbl">ia_backoff (сек, база)</label><input class="input" type="number" step="0.1" name="ia_backoff" value="{{ fields.ia_backoff }}"></div>
-        <div class="field"><label class="field__lbl">ia_max_retries</label><input class="input" type="number" min="0" max="20" name="ia_max_retries" value="{{ fields.ia_max_retries }}"></div>
+        <div class="field">
+          <label class="field__lbl">concurrency (доменов одновременно){{ help_dot("Сколько доменов параллельно крутится. Узкое место — Internet Archive троттлит. Дефолт 3–5; больше 8 обычно не имеет смысла, IA начнёт банить.") }}</label>
+          <input class="input" type="number" min="1" max="20" name="concurrency" value="{{ fields.concurrency }}">
+        </div>
+        <div class="field">
+          <label class="field__lbl">ia_rate_limit (req/sec){{ help_dot("Общий вентиль на ВСЕ запросы к Internet Archive (CDX + снапшоты) суммарно по всем параллельным доменам. Если ловите 429 — уменьшите.") }}</label>
+          <input class="input" type="number" step="0.1" name="ia_rate_limit" value="{{ fields.ia_rate_limit }}">
+        </div>
+        <div class="field">
+          <label class="field__lbl">ia_backoff (сек, база){{ help_dot("База экспоненциального backoff между ретраями к IA при 429/5xx. Реальные задержки: 2·base, 4·base, 8·base, 16·base, 32·base (capped до 60).") }}</label>
+          <input class="input" type="number" step="0.1" name="ia_backoff" value="{{ fields.ia_backoff }}">
+        </div>
+        <div class="field">
+          <label class="field__lbl">ia_max_retries{{ help_dot("Сколько раз пытаться повторить запрос к IA при transient ошибке. 4xx (кроме 429) не ретраятся — пропускаются сразу.") }}</label>
+          <input class="input" type="number" min="0" max="20" name="ia_max_retries" value="{{ fields.ia_max_retries }}">
+        </div>
       </div>
     </section>
 
@@ -92,6 +132,7 @@
       <label class="toggle {% if fields.check_subdomains %}toggle--on{% endif %}">
         <input type="checkbox" name="check_subdomains" value="true" {% if fields.check_subdomains %}checked{% endif %} style="display:none" onchange="this.parentNode.classList.toggle('toggle--on', this.checked)">
         <span class="toggle__box"></span><span>анализировать поддомены как отдельные сущности (matchType=host)</span>
+        {{ help_dot("По умолчанию blog.foo.com обрезается до foo.com и анализируется весь домен целиком. С этой опцией поддомен сохраняется, CDX сужается до matchType=host — анализируется только этот хост.") }}
       </label>
     </section>
 

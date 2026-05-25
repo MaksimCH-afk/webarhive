@@ -18,6 +18,7 @@ Proxy-headers behaviour (spec §17 last paragraph):
 from __future__ import annotations
 
 import logging
+from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import FastAPI
@@ -65,6 +66,41 @@ def _ensure_asset_dirs() -> None:
         )
 
 
+@asynccontextmanager
+async def _lifespan(app: FastAPI):
+    """Startup: пометить «висящие» running-прогоны как aborted (они
+    остались в БД от прошлого процесса — задача в asyncio не переживает
+    рестарт контейнера). Так главная не показывает мёртвый running."""
+    from datetime import datetime
+    from sqlalchemy import update as sa_update
+    from webarhive.db.engine import get_session
+    from webarhive.db.models import Domain, DomainStatus, Run, RunStatus
+    async with get_session() as s:
+        res = await s.execute(
+            sa_update(Run)
+            .where(Run.status == RunStatus.RUNNING.value)
+            .values(status=RunStatus.ABORTED.value,
+                    finished_at=datetime.utcnow())
+        )
+        if res.rowcount:
+            logger.warning(
+                "reaped %d stale running run(s) from previous process",
+                res.rowcount,
+            )
+            await s.execute(
+                sa_update(Domain)
+                .where(Domain.status.in_([
+                    DomainStatus.PENDING.value,
+                    DomainStatus.RUNNING.value,
+                ]))
+                .values(status=DomainStatus.NO_DATA.value,
+                        error_message="прогон прерван перезапуском сервера",
+                        finished_at=datetime.utcnow())
+            )
+        await s.commit()
+    yield
+
+
 def create_app() -> FastAPI:
     settings = get_settings()
     _ensure_asset_dirs()
@@ -74,6 +110,7 @@ def create_app() -> FastAPI:
         docs_url="/api/docs",
         redoc_url=None,
         openapi_url="/api/openapi.json",
+        lifespan=_lifespan,
     )
 
     # Spec §17: trust proxy headers when behind Cloudflare Tunnel
@@ -92,5 +129,4 @@ def create_app() -> FastAPI:
     app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
     app.include_router(html_router)
     app.include_router(api_router)
-
     return app

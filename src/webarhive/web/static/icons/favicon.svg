@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">
+  <!-- Reference: blue square, white clock outline with hands, white circle with blue checkmark bottom-right -->
+  <rect width="32" height="32" rx="6" fill="#2358e0"/>
+  <!-- clock ring -->
+  <circle cx="14" cy="16" r="8" fill="none" stroke="#ffffff" stroke-opacity="0.55" stroke-width="2.4"/>
+  <!-- clock hands -->
+  <path d="M14 11 L14 16 L17.5 17.7" stroke="#ffffff" stroke-width="2.6"
+        stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+  <!-- check bubble bottom-right -->
+  <circle cx="22.5" cy="22.5" r="5.5" fill="#ffffff"/>
+  <path d="M20 22.7 L22 24.7 L25.2 21.2" stroke="#2358e0" stroke-width="1.8"
+        stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+</svg>

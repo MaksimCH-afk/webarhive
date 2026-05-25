@@ -4,7 +4,9 @@
 -#}
 {% from "_icons.html" import icon %}
 
-{#- verdict_badge: clean/nuanced/dirty или нет / pending / ошибка / no_data -#}
+{#- verdict_badge: clean/nuanced/dirty или нет / pending / ошибка / no_data
+    Колонка «вердикт» НИКОГДА не показывает «running» — это статус процесса,
+    не вердикт. Бегущие/ожидающие домены имеют здесь нейтральный плейсхолдер. -#}
 {%- macro verdict_badge(verdict, status=None) -%}
   {%- if verdict == "clean" -%}
     <span class="badge badge--clean">{{ icon("Check", 12) }}чистый</span>
@@ -16,10 +18,8 @@
     <span class="badge badge--error">{{ icon("CircleDashed", 12) }}нет данных</span>
   {%- elif status == "error" -%}
     <span class="badge badge--error">{{ icon("CircleDashed", 12) }}ошибка</span>
-  {%- elif status == "pending" -%}
-    <span class="badge badge--neutral">{{ icon("Hourglass", 11) }}pending</span>
-  {%- elif status == "running" -%}
-    <span class="badge badge--running">running</span>
+  {%- elif status in ("pending", "running") -%}
+    <span class="badge badge--neutral">{{ icon("Hourglass", 11) }}не проверен</span>
   {%- else -%}
     <span class="badge badge--neutral">{{ icon("CircleDashed", 12) }}не выставлен</span>
   {%- endif -%}
@@ -117,6 +117,15 @@
       {%- endfor -%}
     </div>
   {%- endif -%}
+{%- endmacro -%}
+
+{#- help_dot: маленький кружок «?» с тултипом-подсказкой на hover.
+    Используется рядом с лейблами полей настроек, чтобы не лезть в /help. -#}
+{%- macro help_dot(text) -%}
+  <span class="tooltip-host" style="display:inline-block">
+    <span class="help-dot" tabindex="0" aria-label="подсказка">?</span>
+    <span class="tooltip tooltip--wide">{{ text }}</span>
+  </span>
 {%- endmacro -%}
 
 {#- mini legend под лентой -#}

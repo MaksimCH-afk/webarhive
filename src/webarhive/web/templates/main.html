@@ -182,7 +182,7 @@
         <span class="muted" style="font-size:12px">настройки копируются снимком из <a href="/settings">глобальных</a></span>
         <span class="spacer"></span>
         <button type="button" class="btn btn--sm" onclick="toggleNew(false)">отмена</button>
-        <button type="button" id="launch-btn" class="btn btn--sm btn--primary" disabled onclick="launch()">{{ icon("Play", 13) }} запустить прогон</button>
+        <button type="button" id="launch-btn" class="btn btn--sm btn--primary" onclick="launch()">{{ icon("Play", 13) }} запустить прогон</button>
       </div>
     </form>
   </div>
@@ -209,10 +209,17 @@ async function analyze() {
   rep.innerHTML = `<div class="report-bar" style="margin-top:14px">
     <span>отчёт о загрузке: загружено <b>${data.raw_lines}</b> строк → валидных уникальных <b>${data.valid_unique.length}</b> → отброшено <b>${data.dropped}</b></span>
   </div>${rejBlock}`;
-  document.getElementById("launch-btn").disabled = data.valid_unique.length === 0;
+  return data;
 }
 async function launch() {
-  if (!_validDomains.length) return;
+  // Если ещё не было «проверить ввод» — сделаем его автоматически.
+  if (!_validDomains.length) {
+    const data = await analyze();
+    if (!data || !data.valid_unique.length) {
+      alert("Не нашёл валидных доменов в поле или файле. Добавьте хотя бы один.");
+      return;
+    }
+  }
   const btn = document.getElementById("launch-btn");
   btn.disabled = true;
   btn.textContent = "Запускаем…";
@@ -220,7 +227,13 @@ async function launch() {
   fd.append("domains", _validDomains.join("\n"));
   fd.append("note", document.getElementById("note-input").value || "");
   const r = await fetch("/api/runs", { method: "POST", body: fd });
-  if (!r.ok) { alert("Не удалось: " + r.status); btn.disabled = false; btn.textContent = "Запустить ещё раз"; return; }
+  if (!r.ok) {
+    const txt = await r.text().catch(() => "");
+    alert("Не удалось запустить (HTTP " + r.status + ")" + (txt ? ":\n" + txt : ""));
+    btn.disabled = false;
+    btn.textContent = "Запустить ещё раз";
+    return;
+  }
   const data = await r.json();
   location.href = data.redirect;
 }

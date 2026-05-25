@@ -81,6 +81,10 @@
       <option value="verdict" {% if filters.sort == 'verdict' %}selected{% endif %}>по вердикту</option>
       <option value="flags"   {% if filters.sort == 'flags' %}selected{% endif %}>по числу флагов</option>
     </select>
+    <button type="button" class="btn btn--sm" id="copy-selected-btn" onclick="copySelected()" disabled
+            title="скопировать выделенные домены в буфер">
+      {{ icon("Copy", 13) }} <span id="copy-label">копировать</span>
+    </button>
     <a class="btn btn--sm" href="/api/runs/{{ run.id }}/export.csv?{{ filters.qs() }}">{{ icon("Download", 13) }} экспорт CSV</a>
   </form>
 
@@ -92,9 +96,12 @@
         <div class="muted">Сбросьте фильтры или измените запрос.</div>
       </div>
     {% else %}
-      <table class="tbl">
+      <table class="tbl" id="domains-tbl">
         <thead>
           <tr>
+            <th style="width:32px;text-align:center">
+              <input type="checkbox" id="sel-all" onclick="toggleAll(this)" title="выделить все на странице">
+            </th>
             <th>домен</th>
             <th style="width:170px">вердикт</th>
             <th style="width:100px">возраст</th>
@@ -111,19 +118,22 @@
           {% if d.verdict == 'dirty' %}{% set row_cls = row_cls + ' row--dirty' %}
           {% elif has_alert and not d.verdict %}{% set row_cls = row_cls + ' row--alert' %}
           {% endif %}
-          <tr class="{{ row_cls }}" onclick="location.href='/domains/{{ d.id }}'">
-            <td>
+          <tr class="{{ row_cls }}" data-domain="{{ d.domain }}">
+            <td style="text-align:center" onclick="event.stopPropagation()">
+              <input type="checkbox" class="sel-row" onchange="updateSelection()">
+            </td>
+            <td onclick="location.href='/domains/{{ d.id }}'">
               <div class="domain-row">
                 {{ verdict_strip(d.verdict, d.status) }}
                 <span class="mono" style="color:var(--text)">{{ d.domain }}</span>
               </div>
             </td>
-            <td>{{ verdict_badge(d.verdict, d.status) }}</td>
-            <td class="mono" style="color:var(--text-2)">{% if d.age_days %}{{ d.age_days }} дн{% else %}<span class="muted">—</span>{% endif %}</td>
-            <td class="mono" style="color:var(--text-2)">{{ d.total_versions or 0 }}</td>
-            <td>{{ flag_stack(d, d.epochs, CATEGORY_BY_KEY, d.redirects) }}</td>
-            <td>{{ status_pill(d.status) }}</td>
-            <td style="text-align:right">{{ icon("ChevronRight", 16, "var(--text-3)") }}</td>
+            <td onclick="location.href='/domains/{{ d.id }}'">{{ verdict_badge(d.verdict, d.status) }}</td>
+            <td class="mono" style="color:var(--text-2)" onclick="location.href='/domains/{{ d.id }}'">{% if d.age_days %}{{ d.age_days }} дн{% else %}<span class="muted">—</span>{% endif %}</td>
+            <td class="mono" style="color:var(--text-2)" onclick="location.href='/domains/{{ d.id }}'">{{ d.total_versions or 0 }}</td>
+            <td onclick="location.href='/domains/{{ d.id }}'">{{ flag_stack(d, d.epochs, CATEGORY_BY_KEY, d.redirects) }}</td>
+            <td onclick="location.href='/domains/{{ d.id }}'">{{ status_pill(d.status) }}</td>
+            <td style="text-align:right" onclick="location.href='/domains/{{ d.id }}'">{{ icon("ChevronRight", 16, "var(--text-3)") }}</td>
           </tr>
         {% endfor %}
         </tbody>
@@ -135,6 +145,48 @@
 </div>
 
 <script>
+// ---- выделение + копирование ----
+function toggleAll(box) {
+  document.querySelectorAll(".sel-row").forEach(cb => { cb.checked = box.checked; });
+  updateSelection();
+}
+function selectedDomains() {
+  return [...document.querySelectorAll(".sel-row:checked")]
+    .map(cb => cb.closest("tr").dataset.domain)
+    .filter(Boolean);
+}
+function updateSelection() {
+  const n = selectedDomains().length;
+  const btn = document.getElementById("copy-selected-btn");
+  const lbl = document.getElementById("copy-label");
+  btn.disabled = n === 0;
+  lbl.textContent = n ? `копировать (${n})` : "копировать";
+  // tri-state header
+  const total = document.querySelectorAll(".sel-row").length;
+  const head = document.getElementById("sel-all");
+  head.checked = n > 0 && n === total;
+  head.indeterminate = n > 0 && n < total;
+}
+async function copySelected() {
+  const list = selectedDomains();
+  if (!list.length) return;
+  const text = list.join("\n");
+  try {
+    await navigator.clipboard.writeText(text);
+    const lbl = document.getElementById("copy-label");
+    const orig = lbl.textContent;
+    lbl.textContent = `✓ скопировано (${list.length})`;
+    setTimeout(() => { lbl.textContent = orig; }, 1500);
+  } catch (e) {
+    // fallback на старых браузерах
+    const ta = document.createElement("textarea");
+    ta.value = text; document.body.appendChild(ta);
+    ta.select(); document.execCommand("copy");
+    document.body.removeChild(ta);
+    alert("Скопировано " + list.length + " доменов в буфер.");
+  }
+}
+
 async function rerun(runId) {
   if (!confirm("Запустить новый прогон с теми же {{ run.total_domains }} доменами и настройками?")) return;
   const r = await fetch("/api/runs/" + runId + "/rerun", { method: "POST" });
