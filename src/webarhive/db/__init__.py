@@ -11,6 +11,7 @@ from webarhive.db.models import (
     Run,
     RunStatus,
     Verdict,
+    WhoisCache,
 )
 
 __all__ = [
@@ -25,6 +26,7 @@ __all__ = [
     "Run",
     "RunStatus",
     "Verdict",
+    "WhoisCache",
     "create_engine_and_session",
     "get_session",
 ]

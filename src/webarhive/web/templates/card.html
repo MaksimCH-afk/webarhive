@@ -200,6 +200,36 @@
       <div class="kv__row"><span class="kv__k">последний захват</span><span class="kv__v kv__v--mono">{{ domain.last_capture_at.strftime('%Y-%m-%d') if domain.last_capture_at else '—' }}</span></div>
       <div class="kv__row"><span class="kv__k">эпох</span><span class="kv__v">{{ epochs|length }}</span></div>
       <div class="kv__row"><span class="kv__k">внешних редиректов</span><span class="kv__v">{{ ext_redirects|length }}</span></div>
+      <div class="kv__row">
+        <span class="kv__k">регистрация (WHOIS)</span>
+        <span class="kv__v kv__v--mono">
+          {%- if domain.whois_registration_date -%}
+            {{ domain.whois_registration_date.strftime('%Y-%m-%d') }}
+            {%- if domain.whois_status == "from_cache" %} <span class="muted" style="font-size:11px">· из кэша</span>{% endif -%}
+          {%- elif domain.whois_status == "limit" -%}
+            <span class="muted">не получено · лимит</span>
+          {%- elif domain.whois_status == "error" -%}
+            <span class="muted">не получено · ошибка</span>
+          {%- elif domain.whois_status -%}
+            <span class="muted">{{ domain.whois_status }}</span>
+          {%- else -%}
+            <span class="muted">WHOIS выключен</span>
+          {%- endif -%}
+        </span>
+      </div>
+      <div class="kv__row">
+        <span class="kv__k">разница с архивом</span>
+        <span class="kv__v">
+          {%- if domain.whois_registration_date and domain.first_capture_at -%}
+            {%- set diff_days = (domain.first_capture_at - domain.whois_registration_date).days -%}
+            {%- if diff_days >= 0 -%}
+              архив на <b>{{ diff_days }}</b> дн позже регистрации
+            {%- else -%}
+              архив на <b>{{ -diff_days }}</b> дн <b>раньше</b> регистрации <span class="muted">(?)</span>
+            {%- endif -%}
+          {%- else -%}—{%- endif -%}
+        </span>
+      </div>
     </div>
 
     <div class="divider-h"></div>
@@ -248,6 +278,87 @@
     {% endif %}
   </div>
 </div>
+
+{#- ===== Лучший слепок · на каждую эпоху (если фича включена) ===== -#}
+{% set has_any_best = epochs|selectattr("best_snapshot_url")|list %}
+{% if has_any_best %}
+<div class="card">
+  <div class="card__head">
+    {{ icon("Download", 16, "var(--text-2)") }}
+    <span class="card__title">Лучший слепок</span>
+    <span class="muted" style="font-size:12.5px;margin-left:4px">· наиболее полный сохранённый снимок главной по каждой эпохе</span>
+  </div>
+  <div class="card__body card__body--p0">
+    <table class="tbl">
+      <thead>
+        <tr>
+          <th style="width:60px">эпоха</th>
+          <th>период · категория</th>
+          <th style="width:120px">слепок</th>
+          <th style="width:90px">score</th>
+          <th>ресурсы</th>
+          <th>чего не хватает</th>
+          <th style="width:90px">открыть</th>
+        </tr>
+      </thead>
+      <tbody>
+      {% for e in epochs %}
+        {% if e.best_snapshot_url %}
+        {% set bs = e.best_snapshot_detail or {} %}
+        <tr>
+          <td class="mono">#{{ loop.index }}</td>
+          <td>
+            <div class="mono small" style="color:var(--text-2)">
+              {{ e.period_from.strftime('%Y-%m-%d') }} → {{ e.period_to.strftime('%Y-%m-%d') }}
+            </div>
+            <div class="small">{{ e.category|category_label }}</div>
+          </td>
+          <td class="mono small">{{ e.best_snapshot_ts[:8] if e.best_snapshot_ts else '—' }}</td>
+          <td class="mono">
+            {{ '%.2f'|format(e.best_snapshot_score or 0) }}
+            {% if (e.best_snapshot_score or 0) < 0.5 %}
+              <span class="badge badge--nuance" style="margin-left:4px">неполный</span>
+            {% endif %}
+          </td>
+          <td class="small">
+            {% if bs.resources_total %}
+              <b>{{ bs.resources_archived }}/{{ bs.resources_total }}</b> сохранено
+              {% if bs.by_type %}
+                <span class="muted" style="font-size:11px">
+                ({% for t, pair in bs.by_type.items() %}{{ t }} {{ pair[1] }}/{{ pair[0] }}{% if not loop.last %}, {% endif %}{% endfor %})
+                </span>
+              {% endif %}
+            {% else %}
+              <span class="muted">нет внешних ресурсов</span>
+            {% endif %}
+            {% if bs.integrity == 'truncated' %}<br><span class="muted small">HTML обрезан</span>{% endif %}
+          </td>
+          <td class="small mono" style="color:var(--text-2);max-width:260px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">
+            {% if bs.missing %}
+              {% for m in bs.missing[:3] %}{{ m }}{% if not loop.last %}<br>{% endif %}{% endfor %}
+              {% if bs.missing|length > 3 %}<span class="muted small">… ещё {{ bs.missing|length - 3 }}</span>{% endif %}
+            {% else %}—{% endif %}
+          </td>
+          <td><a class="help-link" href="{{ e.best_snapshot_url }}" target="_blank" rel="noopener">открыть {{ icon("ExternalLink", 11) }}</a></td>
+        </tr>
+        {% endif %}
+      {% endfor %}
+      {% set no_best = epochs|rejectattr("best_snapshot_url")|list %}
+      {% for e in no_best %}
+        <tr>
+          <td class="mono">#{{ loop.index + has_any_best|length }}</td>
+          <td>
+            <div class="mono small" style="color:var(--text-2)">{{ e.period_from.strftime('%Y-%m-%d') }} → {{ e.period_to.strftime('%Y-%m-%d') }}</div>
+            <div class="small">{{ e.category|category_label }}</div>
+          </td>
+          <td colspan="5" class="muted small">лучший слепок недоступен (нет рабочей главной в эпоху)</td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endif %}
 
 {#- ===== Блок В — Под капот (свёрнуто) ===== -#}
 <details class="card">

@@ -204,6 +204,32 @@ async def domain_card(request: Request, domain_id: int):
     )
 
 
+@html_router.get("/runs/{run_id}/log.txt", response_class=PlainTextResponse)
+async def run_log(run_id: int):
+    """Объединённый лог всего прогона: trace каждого домена с префиксом."""
+    from webarhive.db.repo import aggregate_run_log
+    async with get_session() as s:
+        run = await s.get(Run, run_id)
+        if run is None:
+            raise HTTPException(404)
+        text = await aggregate_run_log(s, run_id)
+    headers = {"Content-Disposition": f'attachment; filename="run_{run_id}.log.txt"'}
+    return PlainTextResponse(text or "(пусто)", headers=headers)
+
+
+@api_router.get("/runs/{run_id}/log", response_class=PlainTextResponse)
+async def api_run_log(run_id: int):
+    """То же что .txt-эндпоинт, но без Content-Disposition — для
+    встроенного просмотра на странице прогона (полл/SSE)."""
+    from webarhive.db.repo import aggregate_run_log
+    async with get_session() as s:
+        run = await s.get(Run, run_id)
+        if run is None:
+            raise HTTPException(404)
+        text = await aggregate_run_log(s, run_id)
+    return PlainTextResponse(text or "(пусто)")
+
+
 @html_router.get("/domains/{domain_id}/trace.txt", response_class=PlainTextResponse)
 async def domain_trace(domain_id: int):
     async with get_session() as s:
@@ -229,11 +255,30 @@ async def settings_page(request: Request, saved: bool = False):
 
 
 # Editable field types — for parsing the form values.
-_BOOL_FIELDS = {"enable_verdict", "enable_smart_drop", "enable_redirect_llm",
-                "check_subdomains"}
-_INT_FIELDS = {"max_llm_calls_per_domain", "text_limit", "title_shift_threshold",
-               "concurrency", "ia_max_retries"}
-_FLOAT_FIELDS = {"cost_budget_per_domain", "ia_rate_limit", "ia_backoff"}
+_BOOL_FIELDS = {
+    "enable_verdict", "enable_smart_drop", "enable_redirect_llm",
+    "check_subdomains",
+    "whois_enabled",
+    "enable_best_snapshot", "enable_best_snapshot_content_llm",
+}
+_INT_FIELDS = {
+    "max_llm_calls_per_domain", "text_limit", "title_shift_threshold",
+    "concurrency", "ia_max_retries",
+    "whois_cache_ttl_days", "whois_monthly_floor",
+    "best_snapshot_top_n",
+}
+_FLOAT_FIELDS = {
+    "cost_budget_per_domain", "ia_rate_limit", "ia_backoff",
+    "whois_rate_limit",
+}
+# Свободные строки (модели, API-ключи).
+_STR_FIELDS = (
+    "model_classification", "model_verdict", "model_smart_drop", "model_redirect",
+    "openrouter_api_key", "whois_api_key",
+)
+# Поля-«секреты»: если оператор отправил пустое значение, ИГНОРИРУЕМ —
+# не затираем уже сохранённый ключ пустотой.
+_SECRET_FIELDS = ("openrouter_api_key", "whois_api_key")
 
 
 @html_router.post("/settings", response_class=HTMLResponse)
@@ -241,7 +286,9 @@ async def settings_save(request: Request):
     """Persist UI edits to data/settings.json (spec §11, §15).
 
     Booleans come from checkboxes (present=true / absent=false).
-    Validation: numeric fields cast or rejected; string model fields trimmed.
+    Validation: numeric fields cast or rejected; string fields trimmed.
+    Empty secret fields are silently ignored (don't clobber a stored key
+    with an empty submission).
     """
     form = await request.form()
     updates: dict = {}
@@ -264,12 +311,15 @@ async def settings_save(request: Request):
             except ValueError:
                 pass
 
-    # Strings (model ids)
-    for f in ("model_classification", "model_verdict", "model_smart_drop", "model_redirect"):
+    # Strings (model ids, api keys)
+    for f in _STR_FIELDS:
         if f in form:
             v = str(form[f]).strip()
             if v:
                 updates[f] = v
+            elif f not in _SECRET_FIELDS:
+                # Не-секретные поля можно очищать через пустую строку
+                updates[f] = ""
 
     save_overrides(updates)
     return RedirectResponse(url="/settings?saved=1", status_code=303)
@@ -314,7 +364,9 @@ async def api_create_run(
 
     # Kick off the pipeline in the background.
     task = asyncio.create_task(run_pipeline(
-        run_id=run_id, settings_snapshot=snap, api_key=settings.openrouter_api_key,
+        run_id=run_id, settings_snapshot=snap,
+        api_key=settings.openrouter_api_key,
+        whois_api_key=settings.whois_api_key,
     ))
     request.app.state.pipeline_tasks[run_id] = task
     return JSONResponse({"run_id": run_id, "redirect": f"/runs/{run_id}"})
@@ -340,9 +392,11 @@ async def api_rerun(request: Request, run_id: int):
 
     note = f"повтор прогона #{run_id}" + (f" · {original_note}" if original_note else "")
     new_run_id = await start_run(domains=domains, settings_snapshot=snap, note=note)
-    api_key = get_settings().openrouter_api_key
+    s = get_settings()
     task = asyncio.create_task(run_pipeline(
-        run_id=new_run_id, settings_snapshot=snap, api_key=api_key,
+        run_id=new_run_id, settings_snapshot=snap,
+        api_key=s.openrouter_api_key,
+        whois_api_key=s.whois_api_key,
     ))
     request.app.state.pipeline_tasks[new_run_id] = task
     return JSONResponse({"run_id": new_run_id, "redirect": f"/runs/{new_run_id}"})

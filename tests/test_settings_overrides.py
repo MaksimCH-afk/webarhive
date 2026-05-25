@@ -42,18 +42,25 @@ def test_overrides_round_trip(isolated_overrides):
     assert after.enable_verdict is False
 
 
-def test_overrides_whitelist_drops_secrets(isolated_overrides):
+def test_overrides_whitelist_drops_non_editable(isolated_overrides):
+    """API keys (openrouter, whois) are NOW editable from the UI by
+    explicit user request. Deployment-level things (database_url,
+    app_domain) stay locked to .env."""
     from webarhive.config import get_settings
     from webarhive.config.settings import save_overrides
 
     save_overrides({
-        "openrouter_api_key": "should_be_dropped",  # not editable
-        "database_url": "evil://",                  # not editable
+        "openrouter_api_key": "sk-or-v1-from-ui",   # editable now
+        "whois_api_key": "wh-from-ui",              # editable now
+        "database_url": "evil://",                  # NOT editable
+        "app_domain": "evil.example",               # NOT editable
         "concurrency": 9,                           # legit
     })
     saved = json.loads(isolated_overrides.read_text())
-    assert "openrouter_api_key" not in saved
+    assert saved.get("openrouter_api_key") == "sk-or-v1-from-ui"
+    assert saved.get("whois_api_key") == "wh-from-ui"
     assert "database_url" not in saved
+    assert "app_domain" not in saved
     assert saved["concurrency"] == 9
 
 

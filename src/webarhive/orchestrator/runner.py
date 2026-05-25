@@ -71,10 +71,24 @@ async def process_domain(
     cdx: CdxClient,
     fetcher: SnapshotFetcher,
     llm: OpenRouterClient | None,
+    whois_client=None,
 ) -> None:
     """End-to-end pipeline for a single domain. Writes results to DB
     incrementally and updates the run counters at the end."""
-    tracer = DomainTracer(domain_row.domain)
+    # Live-flush trace to DB on every write — so if the worker hangs
+    # we still see exactly where it got stuck (instead of an empty box
+    # until the function returns).
+    async def _flush_trace(text: str) -> None:
+        try:
+            async with session_factory() as s:
+                d_row = await s.get(Domain, domain_row.id)
+                if d_row is not None:
+                    d_row.trace = text
+                    await s.commit()
+        except Exception:
+            logger.exception("trace flush failed for %s", domain_row.domain)
+
+    tracer = DomainTracer(domain_row.domain, flush_fn=_flush_trace)
     started_at = datetime.utcnow()
 
     models = snapshot["models"]
@@ -242,6 +256,76 @@ async def process_domain(
                 await s.commit()
         verdict_for_counter = verdict_result.verdict
 
+        # --- WHOIS: реальная дата регистрации (если включено) ---
+        whois_reg_date = None
+        whois_status_str = None
+        whois_cfg = snapshot.get("whois", {}) or {}
+        if whois_cfg.get("enabled") and whois_client is not None:
+            from webarhive.db.repo import whois_cache_get, whois_cache_put
+            ttl = int(whois_cfg.get("cache_ttl_days", 90))
+            cached = None
+            async with session_factory() as s:
+                cached = await whois_cache_get(s, domain_row.domain, ttl)
+            if cached is not None:
+                whois_reg_date, prev_status = cached
+                whois_status_str = "from_cache"
+                tracer.info(
+                    f"WHOIS: из кэша · регистрация {whois_reg_date.date() if whois_reg_date else '—'}"
+                )
+            else:
+                tracer.step("WHOIS")
+                r = await whois_client.lookup(domain_row.domain)
+                whois_reg_date = r.registration_date
+                whois_status_str = r.status
+                async with session_factory() as s:
+                    await whois_cache_put(
+                        s, domain_row.domain,
+                        registration_date=whois_reg_date,
+                        raw_status=r.status,
+                    )
+                    await s.commit()
+                rem_part = f" · осталось {r.remaining_requests}" if r.remaining_requests is not None else ""
+                if r.status == "got":
+                    tracer.info(f"WHOIS: регистрация {r.registration_date.date()}{rem_part}")
+                elif r.status == "limit":
+                    tracer.warn(f"WHOIS: лимит исчерпан{rem_part}")
+                else:
+                    tracer.warn(f"WHOIS: {r.status} — {r.error or ''}{rem_part}")
+
+        # --- Best snapshot (если включено) ---
+        epoch_best: dict[int, "object"] = {}
+        bs_cfg = snapshot.get("best_snapshot", {}) or {}
+        if bs_cfg.get("enabled") and topic_result.epochs:
+            from webarhive.analysis.best_snapshot import (
+                best_snapshot_for_epoch,
+                epoch_candidates,
+                filter_home_page_rows,
+            )
+            tracer.step("ЛУЧШИЙ_СЛЕПОК", f"эпох: {len(topic_result.epochs)}")
+            top_n = int(bs_cfg.get("top_n", 5))
+            home_rows = filter_home_page_rows(cdx_rows, domain_row.domain)
+            for i, ep in enumerate(topic_result.epochs):
+                cands = epoch_candidates(home_rows, ep.period_from, ep.period_to)
+                if not cands:
+                    tracer.info(f"эпоха #{i+1}: лучший слепок недоступен (нет 200-главной)")
+                    continue
+                try:
+                    best = await best_snapshot_for_epoch(
+                        epoch_idx=i, candidates=cands,
+                        source_domain=domain_row.domain,
+                        fetcher=fetcher, cdx=cdx, top_n=top_n,
+                    )
+                except Exception as exc:
+                    tracer.warn(f"эпоха #{i+1}: best-snap упал — {exc}")
+                    continue
+                if best is not None:
+                    epoch_best[i] = best
+                    tracer.info(
+                        f"эпоха #{i+1}: best {best.timestamp[:8]} · "
+                        f"score {best.score} · ресурсов {best.resources_archived}/"
+                        f"{best.resources_total}"
+                    )
+
         # --- Persist result components ---
         async with session_factory() as s:
             d = await s.get(Domain, domain_row.id)
@@ -257,8 +341,15 @@ async def process_domain(
             d.verdict_reason = verdict_result.reason
             d.verdict_key_flags = verdict_result.key_flags
 
-            # Epochs
-            for ep in topic_result.epochs:
+            # WHOIS attachments
+            if whois_status_str is not None:
+                d.whois_registration_date = whois_reg_date
+                d.whois_status = whois_status_str
+                d.whois_fetched_at = datetime.utcnow()
+
+            # Epochs (с опциональным best_snapshot)
+            for i, ep in enumerate(topic_result.epochs):
+                bs = epoch_best.get(i)
                 s.add(Epoch(
                     domain_id=d.id,
                     period_from=ep.period_from,
@@ -268,6 +359,16 @@ async def process_domain(
                     reason=ep.reason,
                     sample_snapshot_url=ep.sample_snapshot_url,
                     versions_in_epoch=ep.versions_in_epoch,
+                    best_snapshot_url=(bs.snapshot_url_human if bs else None),
+                    best_snapshot_ts=(bs.timestamp if bs else None),
+                    best_snapshot_score=(bs.score if bs else None),
+                    best_snapshot_detail=({
+                        "resources_total": bs.resources_total,
+                        "resources_archived": bs.resources_archived,
+                        "by_type": bs.by_type,
+                        "integrity": bs.integrity,
+                        "missing": bs.missing,
+                    } if bs else None),
                 ))
 
             # Redirects — spec §7 says technical redirects are "не
@@ -324,7 +425,10 @@ async def process_domain(
         final_status = DomainStatus.ERROR
         error_message = f"{type(exc).__name__}: {exc}"
     finally:
-        # Always flush trace + counters, even on error.
+        # Always flush trace + counters, even on error. Drain pending
+        # live-flushes first so we don't race with a stale background
+        # task that would overwrite the final state.
+        await tracer.drain()
         async with session_factory() as s:
             d = await s.get(Domain, domain_row.id)
             if d is not None:
@@ -373,6 +477,7 @@ async def run_pipeline(
     run_id: int,
     settings_snapshot: dict,
     api_key: str,
+    whois_api_key: str = "",
     session_factory: async_sessionmaker | None = None,
 ) -> None:
     """Process all pending domains of a run with bounded concurrency.
@@ -411,6 +516,17 @@ async def run_pipeline(
                                   max_retries=max_retries, backoff_base=backoff)
         llm = OpenRouterClient(api_key=api_key) if api_key else None
 
+        # WHOIS client only built when feature is on AND key is set.
+        whois_cfg = settings_snapshot.get("whois", {}) or {}
+        whois_client = None
+        if whois_cfg.get("enabled") and whois_api_key:
+            from webarhive.clients.whois import WhoisClient
+            whois_client = WhoisClient(
+                api_key=whois_api_key,
+                rate_limit=float(whois_cfg.get("rate_limit", 20.0 / 60.0)),
+                monthly_floor=int(whois_cfg.get("monthly_floor", 10)),
+            )
+
         # Hard ceiling per domain so one slow domain (huge archive
         # footprint, many redirects with all LLM roles on, etc.) can't
         # block the worker pool forever. Conservatively generous —
@@ -431,6 +547,7 @@ async def run_pipeline(
                                 cdx=cdx,
                                 fetcher=fetcher,
                                 llm=llm,
+                                whois_client=whois_client,
                             ),
                             timeout=per_domain_timeout,
                         )
@@ -463,6 +580,8 @@ async def run_pipeline(
         finally:
             if llm is not None:
                 await llm.aclose()
+            if whois_client is not None:
+                await whois_client.aclose()
 
     async with session_factory() as s:
         await finish_run(s, run_id, status=RunStatus.FINISHED)

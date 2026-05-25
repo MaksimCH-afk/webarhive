@@ -127,6 +127,14 @@ class Domain(Base):
     drops: Mapped[list[Drop]] = relationship(back_populates="domain_ref", cascade="all, delete-orphan")
     llm_calls: Mapped[list[LlmCall]] = relationship(back_populates="domain_ref", cascade="all, delete-orphan")
 
+    # WHOIS data (spec extension) — реальная дата регистрации, отдельно
+    # от «первой активности в архиве». Берётся из кэша domain-level если
+    # свежее WHOIS_CACHE_TTL_DAYS, иначе через WhoisJSON API.
+    whois_registration_date: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    whois_status: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    # got | from_cache | limit | error | disabled
+    whois_fetched_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
     __table_args__ = (
         Index("ix_domain_run_domain", "run_id", "domain"),
     )
@@ -146,7 +154,29 @@ class Epoch(Base):
     sample_snapshot_url: Mapped[str | None] = mapped_column(Text, nullable=True)
     versions_in_epoch: Mapped[int] = mapped_column(Integer, default=1)
 
+    # Best snapshot (spec extension) — лучший слепок главной страницы
+    # внутри эпохи. Заполняется анализатором, если ENABLE_BEST_SNAPSHOT.
+    best_snapshot_url: Mapped[str | None] = mapped_column(Text, nullable=True)
+    best_snapshot_ts: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    best_snapshot_score: Mapped[float | None] = mapped_column(Float, nullable=True)
+    # детальный JSON: {"resources": {...}, "integrity": ..., "missing": [...]}
+    best_snapshot_detail: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
+
     domain_ref: Mapped[Domain] = relationship(back_populates="epochs")
+
+
+class WhoisCache(Base):
+    """Domain-level WHOIS cache (spec extension §11).
+
+    Ключ — нормализованный домен. Registration date почти не меняется —
+    кэшируем агрессивно (default 90 дней) чтобы экономить лимит
+    бесплатного плана WhoisJSON (1000 запросов/месяц)."""
+    __tablename__ = "whois_cache"
+
+    domain: Mapped[str] = mapped_column(String(255), primary_key=True)
+    registration_date: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    fetched_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, index=True)
+    raw_status: Mapped[str | None] = mapped_column(String(32), nullable=True)
 
 
 class Redirect(Base):

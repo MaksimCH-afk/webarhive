@@ -76,6 +76,70 @@ async def list_domains(session: AsyncSession, run_id: int) -> list[Domain]:
     return list(res.scalars())
 
 
+async def whois_cache_get(
+    session: AsyncSession, domain: str, ttl_days: int,
+) -> tuple[datetime | None, str | None] | None:
+    """Return (registration_date, status) if cache has a fresh entry for
+    this domain, else None. Cache entry is "fresh" if fetched_at is
+    within ttl_days."""
+    from webarhive.db.models import WhoisCache
+    row = await session.get(WhoisCache, domain)
+    if row is None:
+        return None
+    age_days = (datetime.utcnow() - row.fetched_at).days
+    if age_days > ttl_days:
+        return None
+    return (row.registration_date, row.raw_status)
+
+
+async def whois_cache_put(
+    session: AsyncSession, domain: str,
+    registration_date: datetime | None, raw_status: str | None = None,
+) -> None:
+    """Upsert a domain WHOIS entry. SQLite-friendly."""
+    from webarhive.db.models import WhoisCache
+    row = await session.get(WhoisCache, domain)
+    if row is None:
+        session.add(WhoisCache(
+            domain=domain,
+            registration_date=registration_date,
+            fetched_at=datetime.utcnow(),
+            raw_status=raw_status,
+        ))
+    else:
+        row.registration_date = registration_date
+        row.fetched_at = datetime.utcnow()
+        row.raw_status = raw_status
+
+
+async def aggregate_run_log(session: AsyncSession, run_id: int) -> str:
+    """Compose a single, time-sorted log for an entire run.
+
+    Each domain prefixes its lines with `[domain.com]` so the source is
+    obvious in the merged view. Lines that start with `[YYYY-MM-DD…]`
+    timestamp are sorted globally; the rest follow their host block.
+    """
+    res = await session.execute(
+        select(Domain.domain, Domain.trace)
+        .where(Domain.run_id == run_id)
+        .order_by(Domain.id)
+    )
+    chunks: list[tuple[str, str]] = []
+    for name, trace in res.all():
+        if not trace:
+            continue
+        for line in trace.splitlines():
+            if not line.strip():
+                continue
+            # extract timestamp from "[YYYY-MM-DD HH:MM:SS] ..."
+            ts = ""
+            if line.startswith("[") and "]" in line:
+                ts = line[1:line.index("]")]
+            chunks.append((ts, f"{line[:21]} [{name}] {line[22:]}" if ts else f"[{name}] {line}"))
+    chunks.sort(key=lambda x: x[0])
+    return "\n".join(line for _, line in chunks)
+
+
 async def get_domain(session: AsyncSession, domain_id: int) -> Domain | None:
     return await session.get(Domain, domain_id)
 

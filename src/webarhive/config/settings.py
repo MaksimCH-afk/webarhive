@@ -13,14 +13,23 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 OVERRIDES_PATH = Path("data/settings.json")
 
 # Editable parameter set — what the UI is allowed to override (everything
-# except secrets and deployment-time bindings like the listen host/port).
+# except deployment-time bindings like the listen host/port). API keys
+# are editable from the UI too (user explicitly asked for it) — kept in
+# data/settings.json which is gitignored, so secrets don't leak via git.
 _EDITABLE_FIELDS = {
+    "openrouter_api_key",
     "model_classification", "model_verdict", "model_smart_drop", "model_redirect",
     "enable_verdict", "enable_smart_drop", "enable_redirect_llm",
     "max_llm_calls_per_domain", "cost_budget_per_domain",
     "text_limit", "title_shift_threshold",
     "concurrency", "ia_rate_limit", "ia_backoff", "ia_max_retries",
     "check_subdomains",
+    # WHOIS
+    "whois_api_key", "whois_enabled", "whois_rate_limit",
+    "whois_cache_ttl_days", "whois_monthly_floor",
+    # Best snapshot
+    "enable_best_snapshot", "best_snapshot_top_n",
+    "enable_best_snapshot_content_llm",
 }
 
 
@@ -75,6 +84,21 @@ class Settings(BaseSettings):
     # Input
     check_subdomains: bool = Field(default=False, alias="CHECK_SUBDOMAINS")
 
+    # WHOIS (spec extension) — реальная дата регистрации домена через WhoisJSON
+    whois_api_key: str = Field(default="", alias="WHOIS_API_KEY")
+    whois_enabled: bool = Field(default=False, alias="WHOIS_ENABLED")
+    whois_rate_limit: float = Field(default=20.0 / 60.0, alias="WHOIS_RATE_LIMIT")  # req/sec → 20/min
+    whois_cache_ttl_days: int = Field(default=90, alias="WHOIS_CACHE_TTL_DAYS")
+    # Если месячный остаток (Remaining-Requests) опустится ниже floor —
+    # перестаём дёргать API на текущий прогон.
+    whois_monthly_floor: int = Field(default=10, alias="WHOIS_MONTHLY_FLOOR")
+
+    # Best snapshot (spec extension) — лучший слепок на эпоху по полноте
+    # ресурсов. По умолчанию выключен — фичу включает оператор.
+    enable_best_snapshot: bool = Field(default=False, alias="ENABLE_BEST_SNAPSHOT")
+    best_snapshot_top_n: int = Field(default=5, alias="BEST_SNAPSHOT_TOP_N")
+    enable_best_snapshot_content_llm: bool = Field(default=False, alias="ENABLE_BEST_SNAPSHOT_CONTENT_LLM")
+
     # App / deployment
     app_domain: str = Field(default="checker.local", alias="APP_DOMAIN")
     app_host: str = Field(default="0.0.0.0", alias="APP_HOST")
@@ -119,6 +143,17 @@ class Settings(BaseSettings):
             },
             "input": {
                 "check_subdomains": self.check_subdomains,
+            },
+            "whois": {
+                "enabled": self.whois_enabled,
+                "rate_limit": self.whois_rate_limit,
+                "cache_ttl_days": self.whois_cache_ttl_days,
+                "monthly_floor": self.whois_monthly_floor,
+            },
+            "best_snapshot": {
+                "enabled": self.enable_best_snapshot,
+                "top_n": self.best_snapshot_top_n,
+                "content_llm": self.enable_best_snapshot_content_llm,
             },
         }
 

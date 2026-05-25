@@ -20,6 +20,12 @@
       <span class="collapse-head__title">Прогон #{{ run.id }}</span>
       <span class="muted mono" style="font-size:12.5px">· {{ run.started_at.strftime('%Y-%m-%d %H:%M') }}</span>
       {{ status_pill(run.status) }}
+      {% if run.status == 'running' %}
+        <button type="button" class="btn btn--sm" style="border-color:var(--dirty-strong);color:var(--dirty-fg)"
+                onclick="event.stopPropagation(); abortRun({{ run.id }})">
+          {{ icon("Square", 13) }} стоп
+        </button>
+      {% endif %}
       <span class="spacer"></span>
       <span class="row gap-3" onclick="event.stopPropagation()">
         <span class="badge badge--clean">{{ run.clean_count }} чистых</span>
@@ -142,9 +148,57 @@
   </div>
 </div>
 
+{#- ===== Общий лог прогона (свёрнут по умолчанию, авто-обновление если running) ===== -#}
+<details class="card" {% if run.status == 'running' %}open{% endif %}>
+  <summary class="collapse-head" style="list-style:none">
+    {{ icon("ChevronRight", 14, "var(--text-3)") }}
+    <span class="collapse-head__title">Под капот · общий лог прогона</span>
+    <span class="muted" style="font-size:12.5px">· агрегирует трассы всех доменов прогона</span>
+    <span class="spacer"></span>
+    <a class="btn btn--sm" href="/runs/{{ run.id }}/log.txt" onclick="event.stopPropagation()">
+      {{ icon("Download", 13) }} скачать .txt
+    </a>
+  </summary>
+  <div class="card__body" style="border-top:1px solid var(--divider)">
+    <div class="log" id="run-log">{% if run.status == 'running' %}(загрузка…){% else %}(нажмите чтобы загрузить){% endif %}</div>
+  </div>
+</details>
+
 </div>
 
 <script>
+// ---- общий лог прогона ----
+async function refreshRunLog() {
+  try {
+    const r = await fetch("/api/runs/{{ run.id }}/log");
+    if (!r.ok) return;
+    const txt = await r.text();
+    const box = document.getElementById("run-log");
+    // авто-скролл вниз, только если пользователь уже у низа
+    const atBottom = box.scrollTop + box.clientHeight >= box.scrollHeight - 20;
+    box.textContent = txt || "(пусто)";
+    if (atBottom) box.scrollTop = box.scrollHeight;
+  } catch (e) {}
+}
+// при раскрытии — сразу подгрузить
+document.querySelector("details.card[open] #run-log") && refreshRunLog();
+document.addEventListener("click", (e) => {
+  if (e.target.closest("details.card") && e.target.closest("summary.collapse-head")) {
+    setTimeout(refreshRunLog, 100);
+  }
+});
+{% if run.status == 'running' %}
+// автообновление каждые 2 сек пока running
+setInterval(refreshRunLog, 2000);
+refreshRunLog();
+{% endif %}
+
+async function abortRun(runId) {
+  if (!confirm("Остановить прогон? Уже обработанные домены сохранятся.")) return;
+  await fetch("/api/runs/" + runId + "/abort", { method: "POST" });
+  location.reload();
+}
+
 // ---- выделение + копирование ----
 function toggleAll(box) {
   document.querySelectorAll(".sel-row").forEach(cb => { cb.checked = box.checked; });

@@ -22,6 +22,23 @@
 
   <form method="post" action="/settings" class="card__body col gap-5">
 
+    {#- API-ключи -#}
+    <section class="col gap-3">
+      <div class="section-title" style="margin:0">API-ключи</div>
+      <div class="form-grid">
+        <div class="field">
+          <label class="field__lbl">OPENROUTER_API_KEY{{ help_dot("Ключ для вызовов LLM (классификация тематики, вердикт). Если поле оставить пустым — сохранённый ранее ключ не затрётся. Получить: openrouter.ai/keys") }}</label>
+          <input class="input" type="password" name="openrouter_api_key" autocomplete="off"
+                 placeholder="{% if settings.openrouter_api_key %}✓ задан ({{ settings.openrouter_api_key[:6] }}…){% else %}sk-or-v1-...{% endif %}">
+        </div>
+        <div class="field">
+          <label class="field__lbl">WHOIS_API_KEY{{ help_dot("Ключ WhoisJSON — для получения реальной даты регистрации домена. Бесплатный план: 1000 запросов/мес, 20/мин. Получить: whoisjson.com. Оставить пустым — сохранённый ключ не затрётся.") }}</label>
+          <input class="input" type="password" name="whois_api_key" autocomplete="off"
+                 placeholder="{% if settings.whois_api_key %}✓ задан ({{ settings.whois_api_key[:6] }}…){% else %}токен из whoisjson.com{% endif %}">
+        </div>
+      </div>
+    </section>
+
     {#- Модели по ролям -#}
     <section class="col gap-3">
       <div class="row gap-3">
@@ -136,6 +153,53 @@
       </label>
     </section>
 
+    {#- WHOIS -#}
+    <section class="col gap-3">
+      <div class="section-title" style="margin:0">WHOIS · реальная дата регистрации</div>
+      <label class="toggle {% if fields.whois_enabled %}toggle--on{% endif %}">
+        <input type="checkbox" name="whois_enabled" value="true" {% if fields.whois_enabled %}checked{% endif %} style="display:none" onchange="this.parentNode.classList.toggle('toggle--on', this.checked)">
+        <span class="toggle__box"></span><span>получать дату регистрации через WhoisJSON</span>
+        {{ help_dot("Реальная дата регистрации домена (не та, что первая активность в архиве). Бесплатный план — 1000 запросов/мес, 20/мин. Кэш на стороне дашборда (см. TTL ниже) экономит лимит.") }}
+      </label>
+      <div class="form-grid">
+        <div class="field">
+          <label class="field__lbl">whois_cache_ttl_days{{ help_dot("Сколько дней хранить дату регистрации в кэше домена. Дата регистрации почти не меняется — дефолт 90 дней. Кэш на уровне ДОМЕНА, не прогона — переиспользуется между запусками.") }}</label>
+          <input class="input" type="number" min="1" max="365" name="whois_cache_ttl_days" value="{{ fields.whois_cache_ttl_days }}">
+        </div>
+        <div class="field">
+          <label class="field__lbl">whois_rate_limit (req/sec){{ help_dot("Бесплатный план WhoisJSON разрешает 20 запросов/мин. Дефолт 0.33 req/sec = 20/мин с запасом.") }}</label>
+          <input class="input" type="number" step="0.01" min="0.05" max="5" name="whois_rate_limit" value="{{ fields.whois_rate_limit }}">
+        </div>
+        <div class="field">
+          <label class="field__lbl">whois_monthly_floor{{ help_dot("Если месячный остаток лимита (заголовок Remaining-Requests) опустился ниже этого порога — перестаём дёргать API на этом прогоне. Защищает от 429 и сохраняет лимит для других прогонов в месяце.") }}</label>
+          <input class="input" type="number" min="0" max="1000" name="whois_monthly_floor" value="{{ fields.whois_monthly_floor }}">
+        </div>
+      </div>
+    </section>
+
+    {#- Best snapshot -#}
+    <section class="col gap-3">
+      <div class="section-title" style="margin:0">Лучший слепок (Best Snapshot)</div>
+      <label class="toggle {% if fields.enable_best_snapshot %}toggle--on{% endif %}">
+        <input type="checkbox" name="enable_best_snapshot" value="true" {% if fields.enable_best_snapshot %}checked{% endif %} style="display:none" onchange="this.parentNode.classList.toggle('toggle--on', this.checked)">
+        <span class="toggle__box"></span><span>искать лучший слепок главной страницы для каждой эпохи</span>
+        {{ help_dot("На каждую тематическую эпоху выбирается самый полный сохранённый снимок главной страницы — по доле сохранённых ресурсов (CSS/JS/изображения), целостности HTML и временной согласованности. Полезно если потом нужно восстановить сайт.") }}
+      </label>
+      <div class="form-grid">
+        <div class="field">
+          <label class="field__lbl">best_snapshot_top_n{{ help_dot("Сколько кандидатов главной страницы внутри эпохи проверять на полноту ресурсов. Каждая проверка = N CDX-запросов на ресурсы, поэтому ограничение. Дефолт 5 — берёт первый, последний и 3 равномерно.") }}</label>
+          <input class="input" type="number" min="1" max="50" name="best_snapshot_top_n" value="{{ fields.best_snapshot_top_n }}">
+        </div>
+        <div class="field" style="justify-content:end">
+          <label class="toggle {% if fields.enable_best_snapshot_content_llm %}toggle--on{% endif %}">
+            <input type="checkbox" name="enable_best_snapshot_content_llm" value="true" {% if fields.enable_best_snapshot_content_llm %}checked{% endif %} style="display:none" onchange="this.parentNode.classList.toggle('toggle--on', this.checked)">
+            <span class="toggle__box"></span><span>содержательность через LLM</span>
+            {{ help_dot("Опционально: после выбора лучшего слепка спросить у LLM — это реальная страница эпохи или заглушка / страница ошибки / coming-soon. Дороже, но точнее.") }}
+          </label>
+        </div>
+      </div>
+    </section>
+
     <div class="row gap-2" style="border-top:1px dashed var(--divider);padding-top:14px">
       <button class="btn btn--primary" type="submit">{{ icon("Check", 13) }} сохранить</button>
       <a class="btn" href="/">отмена</a>
@@ -143,19 +207,19 @@
   </form>
 </div>
 
-{#- Секреты и развёртывание (read-only) -#}
+{#- Развёртывание (read-only) — секреты теперь редактируются выше -#}
 <div class="card">
   <div class="card__head">
     {{ icon("ShieldCheck", 16, "var(--text-2)") }}
-    <span class="card__title">Секреты и развёртывание</span>
-    <span class="muted" style="font-size:12.5px;margin-left:4px">· только из .env, не редактируется</span>
+    <span class="card__title">Развёртывание</span>
+    <span class="muted" style="font-size:12.5px;margin-left:4px">· берётся из .env, не редактируется</span>
   </div>
   <div class="card__body">
     <div class="kv" style="grid-template-columns:repeat(2,minmax(0,1fr));column-gap:28px">
-      <div class="kv__row"><span class="kv__k">OPENROUTER_API_KEY</span><span class="kv__v">{% if settings.openrouter_api_key %}✓ задан ({{ settings.openrouter_api_key[:6] }}…){% else %}<span style="color:var(--dirty-fg)">не задан</span>{% endif %}</span></div>
       <div class="kv__row"><span class="kv__k">APP_DOMAIN</span><span class="kv__v kv__v--mono">{{ settings.app_domain }}</span></div>
       <div class="kv__row"><span class="kv__k">DATABASE_URL</span><span class="kv__v kv__v--mono" style="max-width:280px;overflow:hidden;text-overflow:ellipsis">{{ settings.database_url }}</span></div>
       <div class="kv__row"><span class="kv__k">TRUST_PROXY_HEADERS</span><span class="kv__v">{{ 'да' if settings.trust_proxy_headers else 'нет' }}</span></div>
+      <div class="kv__row"><span class="kv__k">статус OpenRouter ключа</span><span class="kv__v">{% if settings.openrouter_api_key %}✓ задан ({{ settings.openrouter_api_key[:6] }}…){% else %}<span style="color:var(--dirty-fg)">не задан</span>{% endif %}</span></div>
     </div>
   </div>
 </div>
