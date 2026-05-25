@@ -66,20 +66,49 @@
       const rejBlock = r.rejected.length
         ? `<details><summary>Отброшено: ${r.dropped}</summary><ul class="mono small">${r.rejected.map(x => `<li>${x.original} — ${x.reason}</li>`).join('')}</ul></details>`
         : '';
-      document.getElementById('preview').innerHTML = `
+      // Build the "launch" form via plain DOM. We previously tried hx-post
+      // here, but HTMX only processes hx-* on elements present at page load —
+      // freshly innerHTML'd nodes are inert unless htmx.process() is called.
+      // Plain fetch is simpler and doesn't depend on that activation step.
+      const preview = document.getElementById('preview');
+      preview.innerHTML = `
         <div class="report">
           Загружено строк <b>${r.raw_lines}</b> →
           валидных уникальных <b>${r.valid_unique.length}</b> →
           отброшено <b>${r.dropped}</b>
         </div>
         ${rejBlock}
-        <form hx-post="/api/runs" hx-trigger="submit" hx-swap="none"
-              hx-on::after-request="if(event.detail.successful){location.href=JSON.parse(event.detail.xhr.responseText).redirect}">
+        <form id="launch-form">
           <input type="hidden" name="domains" value="${validList.replace(/"/g,'&quot;')}">
           <label class="label">Заметка к прогону (опционально):</label>
           <input type="text" name="note" placeholder="например: тест gpt-4o-mini против haiku">
           <button class="btn primary" type="submit">Запустить прогон по ${r.valid_unique.length} доменам</button>
         </form>`;
+      const form = document.getElementById('launch-form');
+      form.addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const btn = form.querySelector('button[type=submit]');
+        btn.disabled = true;
+        btn.textContent = 'Запускаем…';
+        try {
+          const resp = await fetch('/api/runs', {
+            method: 'POST',
+            body: new FormData(form),
+          });
+          if (!resp.ok) {
+            const txt = await resp.text();
+            alert('Не удалось запустить прогон (' + resp.status + '):\n' + txt);
+            btn.disabled = false;
+            btn.textContent = 'Запустить ещё раз';
+            return;
+          }
+          const data = await resp.json();
+          location.href = data.redirect;
+        } catch (err) {
+          alert('Сетевая ошибка: ' + err);
+          btn.disabled = false;
+        }
+      });
     }
   });
 </script>
