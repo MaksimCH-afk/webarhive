@@ -3,7 +3,17 @@
 {% block content %}
 
 <details class="card compact">
-  <summary class="h2">Прогон #{{ run.id }} · {{ run.started_at.strftime('%Y-%m-%d %H:%M') }} · <span class="badge {{ run.status }}">{{ run.status }}</span></summary>
+  <summary class="h2">
+    Прогон #{{ run.id }} · {{ run.started_at.strftime('%Y-%m-%d %H:%M') }} ·
+    <span class="badge {{ run.status }}">{{ run.status }}</span>
+    {% if run.status in ('aborted', 'finished', 'error') %}
+      <button type="button" class="btn small"
+              style="margin-left: 12px"
+              onclick="event.stopPropagation(); rerun({{ run.id }})">
+        ⟳ повторить с теми же настройками
+      </button>
+    {% endif %}
+  </summary>
   <div class="grid-2 small">
     <div>
       <div class="kv"><span>модель классификации</span><b class="mono">{{ run.settings_snapshot.get('models',{}).get('classification','') }}</b></div>
@@ -14,10 +24,22 @@
     <div>
       <div class="kv"><span>порог сдвига темы</span><b>{{ run.settings_snapshot.get('limits',{}).get('title_shift_threshold','') }}</b></div>
       <div class="kv"><span>проверять поддомены</span><b>{{ 'да' if run.settings_snapshot.get('input',{}).get('check_subdomains') else 'нет' }}</b></div>
+      <div class="kv"><span>роли LLM</span><b>{{ 'verdict ' if run.settings_snapshot.get('roles',{}).get('verdict') }}{{ 'smart_drop ' if run.settings_snapshot.get('roles',{}).get('smart_drop') }}{{ 'redirect_llm' if run.settings_snapshot.get('roles',{}).get('redirect_llm') }}{% if not run.settings_snapshot.get('roles',{}).values()|select|list %}—{% endif %}</b></div>
       <div class="kv"><span>заметка</span><b>{{ run.note or '—' }}</b></div>
     </div>
   </div>
 </details>
+
+<script>
+async function rerun(runId) {
+  if (!confirm('Запустить новый прогон с теми же ' +
+               '{{ run.total_domains }} доменами и настройками?')) return;
+  const r = await fetch('/api/runs/' + runId + '/rerun', { method: 'POST' });
+  if (!r.ok) { alert('Не удалось перезапустить: ' + r.status); return; }
+  const data = await r.json();
+  location.href = data.redirect;
+}
+</script>
 
 {% if run.status == 'running' %}
 <section class="card live" id="live-progress">

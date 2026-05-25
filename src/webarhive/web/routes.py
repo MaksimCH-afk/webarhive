@@ -232,6 +232,34 @@ async def api_create_run(
     return JSONResponse({"run_id": run_id, "redirect": f"/runs/{run_id}"})
 
 
+@api_router.post("/runs/{run_id}/rerun")
+async def api_rerun(request: Request, run_id: int):
+    """Создать новый прогон с теми же доменами и тем же snapshot настроек,
+    что был у указанного прогона. Удобно после ручной остановки или
+    если хочется повторить тест с теми же параметрами модели."""
+    async with get_session() as s:
+        run = await s.get(Run, run_id)
+        if run is None:
+            raise HTTPException(404, "run not found")
+        domains = (await s.execute(
+            select(Domain.domain).where(Domain.run_id == run_id).order_by(Domain.id)
+        )).scalars().all()
+        snap = dict(run.settings_snapshot or {})
+        original_note = run.note or ""
+
+    if not domains:
+        raise HTTPException(400, "у исходного прогона нет доменов")
+
+    note = f"повтор прогона #{run_id}" + (f" · {original_note}" if original_note else "")
+    new_run_id = await start_run(domains=domains, settings_snapshot=snap, note=note)
+    api_key = get_settings().openrouter_api_key
+    task = asyncio.create_task(run_pipeline(
+        run_id=new_run_id, settings_snapshot=snap, api_key=api_key,
+    ))
+    request.app.state.pipeline_tasks[new_run_id] = task
+    return JSONResponse({"run_id": new_run_id, "redirect": f"/runs/{new_run_id}"})
+
+
 @api_router.get("/runs/{run_id}/stream")
 async def api_run_stream(run_id: int):
     """SSE — push run + per-domain progress every second until done."""

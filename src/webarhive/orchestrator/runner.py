@@ -411,18 +411,53 @@ async def run_pipeline(
                                   max_retries=max_retries, backoff_base=backoff)
         llm = OpenRouterClient(api_key=api_key) if api_key else None
 
+        # Hard ceiling per domain so one slow domain (huge archive
+        # footprint, many redirects with all LLM roles on, etc.) can't
+        # block the worker pool forever. Conservatively generous —
+        # marks the domain as ERROR / PARTIAL on overrun.
+        per_domain_timeout = float(settings_snapshot.get("throttle", {}).get(
+            "per_domain_timeout_sec", 600))
+
         try:
             async def worker(d: Domain) -> None:
                 async with semaphore:
-                    await process_domain(
-                        domain_row=d,
-                        run_id=run_id,
-                        snapshot=settings_snapshot,
-                        session_factory=session_factory,
-                        cdx=cdx,
-                        fetcher=fetcher,
-                        llm=llm,
-                    )
+                    try:
+                        await asyncio.wait_for(
+                            process_domain(
+                                domain_row=d,
+                                run_id=run_id,
+                                snapshot=settings_snapshot,
+                                session_factory=session_factory,
+                                cdx=cdx,
+                                fetcher=fetcher,
+                                llm=llm,
+                            ),
+                            timeout=per_domain_timeout,
+                        )
+                    except asyncio.TimeoutError:
+                        logger.warning(
+                            "domain %s exceeded %ss timeout — marking error",
+                            d.domain, per_domain_timeout,
+                        )
+                        async with session_factory() as s:
+                            row = await s.get(Domain, d.id)
+                            if row is not None and row.status not in (
+                                DomainStatus.DONE.value,
+                                DomainStatus.PARTIAL.value,
+                            ):
+                                row.status = DomainStatus.ERROR.value
+                                row.error_message = (
+                                    f"timeout after {per_domain_timeout}s "
+                                    f"(возможно, слишком много REVIEW-редиректов "
+                                    f"при включённом ENABLE_REDIRECT_LLM)"
+                                )
+                                row.finished_at = datetime.utcnow()
+                                await s.commit()
+                    except Exception:
+                        # process_domain already handled its own errors
+                        # via try/except + finally; nothing should escape,
+                        # but if it does, don't crash the whole pool.
+                        logger.exception("worker for %s crashed unexpectedly", d.domain)
 
             await asyncio.gather(*(worker(d) for d in pending), return_exceptions=False)
         finally:

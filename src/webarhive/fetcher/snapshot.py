@@ -19,7 +19,7 @@ from dataclasses import dataclass
 import httpx
 from tenacity import (
     AsyncRetrying,
-    retry_if_exception_type,
+    retry_if_exception,
     stop_after_attempt,
     wait_exponential,
 )
@@ -120,10 +120,23 @@ class SnapshotFetcher:
         url = snapshot_url(timestamp, original_url, for_human=False)
         await self._throttle.acquire()
 
+        # Same retry policy as CDX client: 429/5xx and connection errors
+        # only. A 404 on a snapshot means the capture genuinely doesn't
+        # exist — don't waste ~60s retrying it.
+        def _is_retryable(exc: BaseException) -> bool:
+            if isinstance(exc, (httpx.ConnectError, httpx.ReadTimeout,
+                                httpx.WriteTimeout, httpx.PoolTimeout,
+                                httpx.ConnectTimeout, asyncio.TimeoutError)):
+                return True
+            if isinstance(exc, httpx.HTTPStatusError):
+                code = exc.response.status_code
+                return code == 429 or 500 <= code < 600
+            return False
+
         retryer = AsyncRetrying(
             stop=stop_after_attempt(self._max_retries),
             wait=wait_exponential(multiplier=self._backoff_base, min=self._backoff_base, max=60),
-            retry=retry_if_exception_type((httpx.HTTPError, asyncio.TimeoutError)),
+            retry=retry_if_exception(_is_retryable),
             reraise=True,
         )
 
@@ -133,6 +146,10 @@ class SnapshotFetcher:
                 if resp.status_code == 429 or 500 <= resp.status_code < 600:
                     logger.warning("snapshot retryable status=%s url=%s", resp.status_code, url)
                     raise httpx.HTTPStatusError("retryable", request=resp.request, response=resp)
+                # Don't raise_for_status() — 4xx (e.g. snapshot not found)
+                # is information we want to surface, not retry. The caller
+                # already handles non-200 bodies via fetcher try/except in
+                # analysis layers (_fetch_light, _fetch_heavy).
                 content_type = resp.headers.get("content-type")
                 enc = _detect_encoding(resp.content, content_type)
                 return SnapshotContent(

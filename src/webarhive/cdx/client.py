@@ -21,7 +21,7 @@ from typing import Literal
 import httpx
 from tenacity import (
     AsyncRetrying,
-    retry_if_exception_type,
+    retry_if_exception,
     stop_after_attempt,
     wait_exponential,
 )
@@ -107,17 +107,31 @@ class CdxClient:
 
     async def _get(self, params: list[tuple[str, str]] | dict) -> httpx.Response:
         await self._throttle.acquire()
+
+        # Retry only on transient failures: connection errors, timeouts,
+        # 429 (throttle), 5xx (server). NOT on 4xx — those are permanent
+        # and retrying them just adds 60s of dead waiting per request.
+        def _is_retryable(exc: BaseException) -> bool:
+            if isinstance(exc, (httpx.ConnectError, httpx.ReadTimeout,
+                                httpx.WriteTimeout, httpx.PoolTimeout,
+                                httpx.ConnectTimeout, asyncio.TimeoutError)):
+                return True
+            if isinstance(exc, httpx.HTTPStatusError):
+                code = exc.response.status_code
+                return code == 429 or 500 <= code < 600
+            return False
+
         retryer = AsyncRetrying(
             stop=stop_after_attempt(self._max_retries),
             wait=wait_exponential(multiplier=self._backoff_base, min=self._backoff_base, max=60),
-            retry=retry_if_exception_type((httpx.HTTPError, asyncio.TimeoutError)),
+            retry=retry_if_exception(_is_retryable),
             reraise=True,
         )
         async for attempt in retryer:
             with attempt:
                 resp = await self._client.get(CDX_URL, params=params)
-                # Retry on 429/5xx
-                if resp.status_code in (429,) or 500 <= resp.status_code < 600:
+                # 429/5xx → raise a retryable error so tenacity backs off
+                if resp.status_code == 429 or 500 <= resp.status_code < 600:
                     url_for_log = (
                         dict(params).get("url") if isinstance(params, list) else params.get("url")
                     )
@@ -129,6 +143,8 @@ class CdxClient:
                     raise httpx.HTTPStatusError(
                         "retryable", request=resp.request, response=resp
                     )
+                # 4xx → permanent. raise_for_status fires a non-retryable
+                # HTTPStatusError that propagates up the call chain.
                 resp.raise_for_status()
                 return resp
         raise RuntimeError("unreachable")  # pragma: no cover
