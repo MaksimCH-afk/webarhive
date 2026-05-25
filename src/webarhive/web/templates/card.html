@@ -1,186 +1,310 @@
 {% extends "base.html" %}
-{% block title %}{{ domain.domain }} — webarhive{% endblock %}
+{% from "_icons.html" import icon %}
+{% from "_components.html" import verdict_badge, status_pill, epoch_bar, epoch_legend, category_chip %}
+{% block title %}{{ domain.domain }} — Web Archive Checker{% endblock %}
 {% block content %}
 
-<section class="card">
-  <div class="row-between">
-    <div>
-      <a href="/runs/{{ run.id }}" class="muted small">← прогон #{{ run.id }}</a>
-      <h1 class="h1 mono">{{ domain.domain }}</h1>
-    </div>
-    {% if domain.verdict %}
-    <span class="verdict-badge v-{{ domain.verdict }} big">
-      {% if domain.verdict == 'clean' %}<i data-lucide="check"></i> чистый
-      {% elif domain.verdict == 'nuanced' %}<i data-lucide="alert-triangle"></i> есть нюансы
-      {% else %}<i data-lucide="octagon-x"></i> грязный{% endif %}
-    </span>
-    {% else %}<span class="badge nodata">вердикт не выставлен</span>{% endif %}
-  </div>
-</section>
+{% set has_verdict = domain.verdict in ('clean','nuanced','dirty') %}
+{% set tone = domain.verdict or ('error' if domain.status in ('error','no_data') else 'neutral') %}
+{% set tone_bg = {
+  'clean':'var(--clean-bg)','nuanced':'var(--nuance-bg)','dirty':'var(--dirty-bg)','error':'var(--bg)','neutral':'var(--bg)'
+}[tone] %}
+{% set tone_fg = {
+  'clean':'var(--clean-fg)','nuanced':'var(--nuance-fg)','dirty':'var(--dirty-fg)','error':'var(--text-2)','neutral':'var(--text-2)'
+}[tone] %}
+{% set tone_border = {
+  'clean':'#c6e7d6','nuanced':'#f0d79b','dirty':'#f5c5cb','error':'var(--border)','neutral':'var(--border)'
+}[tone] %}
+{% set tone_label = {
+  'clean':'Чистый','nuanced':'Есть нюансы','dirty':'Грязный','error':'Нет данных','neutral':'Вердикт не выставлен'
+}[tone] %}
+{% set tone_icon = {
+  'clean':'ShieldCheck','nuanced':'AlertTriangle','dirty':'Octagon','error':'CircleDashed','neutral':'CircleDashed'
+}[tone] %}
 
-<!-- A: Result -->
-<section class="card stack">
-  <h2 class="h2">Результат</h2>
-  {% if domain.verdict_reason %}
-  <div class="bubble"><b>Обоснование:</b> {{ domain.verdict_reason }}</div>
-  {% endif %}
-  {% if domain.verdict_key_flags %}
-  <div class="row gap small">
-    {% for f in domain.verdict_key_flags %}<span class="chip">{{ f }}</span>{% endfor %}
-  </div>
-  {% endif %}
+<div class="col gap-4">
 
-  <h3 class="h3">Лента эпох</h3>
-  {% if epochs %}
-  <div class="timeline">
-    {% set min_start = epochs[0].period_from.timestamp() %}
-    {% set max_end = epochs[-1].period_to.timestamp() %}
-    {% set span = (max_end - min_start) or 1 %}
-    {% for e in epochs %}
-      {% set width = ((e.period_to.timestamp() - e.period_from.timestamp()) / span * 100) %}
-      {% if width < 4 %}{% set width = 4 %}{% endif %}
-      <div class="epoch group-{{ e.category|category_group }}{% if is_risky(e.category) %} risky{% endif %}"
-           style="flex: {{ width }};"
-           title="{{ e.period_from.strftime('%Y-%m-%d') }} — {{ e.period_to.strftime('%Y-%m-%d') }} · {{ e.category|category_label }}{% if e.confidence %} · уверенность {{ '%.2f'|format(e.confidence) }}{% endif %}{% if e.reason %}&#10;{{ e.reason }}{% endif %}">
-        <i data-lucide="{{ e.category|category_icon }}"></i>
-        <span class="small">{{ e.category|category_label }}</span>
+{#- ===== Заголовок карточки ===== -#}
+<div class="card" style="padding:14px 18px">
+  <div class="row gap-3" style="margin-bottom:6px">
+    <a class="btn btn--ghost btn--sm" href="/runs/{{ run.id }}">{{ icon("ArrowLeft", 13) }} прогон #{{ run.id }}</a>
+    <span class="spacer"></span>
+  </div>
+  <div class="row gap-3" style="align-items:center;flex-wrap:wrap">
+    <h1 class="mono" style="margin:0;font-size:22px;font-weight:600;color:var(--text-mono);letter-spacing:-0.01em">{{ domain.domain }}</h1>
+    <span style="margin-left:8px">{{ verdict_badge(domain.verdict, domain.status) }}</span>
+    <span class="spacer"></span>
+    <button class="btn btn--sm" onclick="navigator.clipboard.writeText('{{ domain.domain }}'); this.innerHTML = this.innerHTML.replace('копировать','скопировано')">{{ icon("Copy", 13) }} копировать</button>
+    <a class="btn btn--sm" href="https://web.archive.org/web/*/{{ domain.domain }}" target="_blank" rel="noopener">{{ icon("ExternalLink", 13) }} открыть в Wayback</a>
+  </div>
+</div>
+
+{#- ===== Блок A — Результат ===== -#}
+<div class="card">
+  <div class="card__head">
+    {{ icon("ShieldCheck", 16, "var(--text-2)") }}
+    <span class="card__title">Результат</span>
+  </div>
+  <div class="card__body col gap-4">
+
+    {#- VerdictHero -#}
+    <div style="display:grid;grid-template-columns:auto 1fr;gap:16px;padding:16px;border:1px solid {{ tone_border }};border-radius:8px;background:{{ tone_bg }}">
+      <div style="width:56px;height:56px;border-radius:12px;background:#fff;border:1px solid {{ tone_border }};display:grid;place-items:center;color:{{ tone_fg }}">
+        {{ icon(tone_icon, 28) }}
       </div>
-    {% endfor %}
+      <div class="col" style="gap:4px;justify-content:center">
+        <div class="row gap-3">
+          <div style="font-size:18px;font-weight:600;color:{{ tone_fg }};letter-spacing:-0.01em">{{ tone_label }}</div>
+          {% if not has_verdict and domain.status not in ('error','no_data') %}
+            <span class="muted" style="font-size:12px">· LLM-вердикт выключен — ориентируйтесь на флаги</span>
+          {% endif %}
+        </div>
+        <div style="font-size:13.5px;color:var(--text);max-width:760px">{{ domain.verdict_reason or domain.error_message or 'Обоснование не сформулировано.' }}</div>
+        {% if domain.verdict_key_flags %}
+          <div class="row gap-2" style="margin-top:6px;flex-wrap:wrap">
+            <span class="muted" style="font-size:12px">ключевые флаги:</span>
+            {% for f in domain.verdict_key_flags %}
+              <span class="badge badge--neutral">{{ f }}</span>
+            {% endfor %}
+          </div>
+        {% endif %}
+      </div>
+    </div>
+
+    {#- Лента эпох -#}
+    <div class="col gap-3">
+      <div class="row gap-3" style="flex-wrap:nowrap">
+        <div class="section-title" style="margin:0">Лента эпох</div>
+        <span class="muted" style="font-size:12px;white-space:nowrap">· {{ epochs|length }} эпох(и)</span>
+        <span class="spacer"></span>
+        {{ epoch_legend() }}
+      </div>
+      {{ epoch_bar(epochs, CATEGORY_BY_KEY) }}
+    </div>
+
+    {#- Детали по эпохам (свёрнутые) -#}
+    <details class="card" style="margin-top:8px">
+      <summary class="collapse-head" style="list-style:none">
+        {{ icon("ChevronRight", 14, "var(--text-3)") }}
+        <span class="collapse-head__title">Детали по эпохам</span>
+      </summary>
+      <div class="card__body" style="border-top:1px solid var(--divider)">
+        {% if epochs %}
+        <table class="tbl">
+          <thead>
+            <tr>
+              <th style="width:110px">с</th>
+              <th style="width:110px">по</th>
+              <th>категория</th>
+              <th style="width:80px">увер.</th>
+              <th style="width:80px">версий</th>
+              <th>reason</th>
+              <th style="width:90px">снапшот</th>
+            </tr>
+          </thead>
+          <tbody>
+          {% for e in epochs %}
+            <tr>
+              <td class="mono">{{ e.period_from.strftime('%Y-%m-%d') }}</td>
+              <td class="mono">{{ e.period_to.strftime('%Y-%m-%d') }}</td>
+              <td>{{ category_chip(e.category, CATEGORY_BY_KEY) }}</td>
+              <td class="mono" style="color:var(--text-2)">{% if e.confidence %}{{ '%.2f'|format(e.confidence) }}{% else %}—{% endif %}</td>
+              <td class="mono" style="color:var(--text-2)">{{ e.versions_in_epoch or '—' }}</td>
+              <td style="color:var(--text-2);font-size:12.5px">{{ e.reason or '—' }}</td>
+              <td>{% if e.sample_snapshot_url %}<a class="help-link" href="{{ e.sample_snapshot_url }}" target="_blank" rel="noopener">открыть {{ icon("ExternalLink", 11) }}</a>{% else %}<span class="muted">—</span>{% endif %}</td>
+            </tr>
+          {% endfor %}
+          </tbody>
+        </table>
+        {% else %}
+          <div class="muted" style="font-size:13px">эпох нет</div>
+        {% endif %}
+      </div>
+    </details>
   </div>
-  <details class="small"><summary>Детали по эпохам</summary>
-    <table class="dense">
-      <thead><tr><th>с</th><th>по</th><th>категория</th><th>увер.</th><th>версий</th><th>reason</th><th>снапшот</th></tr></thead>
-      <tbody>
-      {% for e in epochs %}
-      <tr>
-        <td class="mono">{{ e.period_from.strftime('%Y-%m-%d') }}</td>
-        <td class="mono">{{ e.period_to.strftime('%Y-%m-%d') }}</td>
-        <td><i data-lucide="{{ e.category|category_icon }}" class="ic"></i> {{ e.category|category_label }}</td>
-        <td class="num">{% if e.confidence %}{{ '%.2f'|format(e.confidence) }}{% endif %}</td>
-        <td class="num">{{ e.versions_in_epoch }}</td>
-        <td class="small">{{ e.reason or '' }}</td>
-        <td><a class="small mono" href="{{ e.sample_snapshot_url }}" target="_blank" rel="noopener">открыть</a></td>
-      </tr>
-      {% endfor %}
-      </tbody>
-    </table>
-  </details>
-  {% else %}<div class="muted">эпох нет</div>{% endif %}
+</div>
 
-  <h3 class="h3">Редиректы</h3>
-  {% set interesting_redirects = redirects|rejectattr('classification', 'equalto', 'technical')|list %}
-  {% set technical_redirects = redirects|selectattr('classification', 'equalto', 'technical')|list %}
-  {% if interesting_redirects %}
-  <table class="dense">
-    <thead><tr><th>дата</th><th>откуда</th><th>куда</th><th>цель</th><th>класс</th><th>причина</th><th>слепок</th></tr></thead>
-    <tbody>
-    {% for r in interesting_redirects %}
-      <tr class="redir-{{ r.classification }}">
-        <td class="mono small">{{ r.captured_at.strftime('%Y-%m-%d') }}</td>
-        <td class="mono small clip">{{ r.from_url }}</td>
-        <td class="mono small clip">{{ r.to_url or '—' }}</td>
-        <td class="mono small">{{ r.target_domain or '—' }}</td>
-        <td>
-          {% if r.classification == 'same_site' %}<span class="badge ok">тот же сайт</span>
-          {% elif r.classification == 'company_move' %}<span class="badge ok">переезд</span>
-          {% elif r.classification == 'review' %}<span class="badge review"><i data-lucide="search"></i> обратить внимание</span>
-          {% else %}<span class="badge muted">{{ r.classification }}</span>{% endif %}
-        </td>
-        <td class="small">{{ r.reason or '' }}</td>
-        <td>{% if r.snapshot_url %}<a class="small mono" href="{{ r.snapshot_url }}" target="_blank" rel="noopener">открыть</a>{% endif %}</td>
-      </tr>
-    {% endfor %}
-    </tbody>
-  </table>
-  {% elif not technical_redirects %}<div class="muted">редиректов нет</div>{% endif %}
-
-  {% if technical_redirects %}
-  <details class="small">
-    <summary>Технические редиректы (свой домен / схема / www) — {{ technical_redirects|length }}</summary>
-    <table class="dense">
-      <thead><tr><th>дата</th><th>откуда</th><th>куда</th><th>причина</th></tr></thead>
-      <tbody>
-      {% for r in technical_redirects %}
+{#- ===== Редиректы ===== -#}
+{% set ext_redirects = redirects|rejectattr('classification','equalto','technical')|list %}
+{% set tech_redirects = redirects|selectattr('classification','equalto','technical')|list %}
+<details class="card" {% if ext_redirects %}open{% endif %}>
+  <summary class="collapse-head" style="list-style:none">
+    {{ icon("ChevronRight", 14, "var(--text-3)") }}
+    <span class="collapse-head__title">Редиректы</span>
+    <span class="muted" style="font-size:12.5px">· всего {{ redirects|length }}, внешних: {{ ext_redirects|length }}</span>
+  </summary>
+  <div class="card__body" style="border-top:1px solid var(--divider)">
+    {% if ext_redirects %}
+    <table class="tbl">
+      <thead>
         <tr>
-          <td class="mono small">{{ r.captured_at.strftime('%Y-%m-%d') }}</td>
-          <td class="mono small clip">{{ r.from_url }}</td>
-          <td class="mono small clip">{{ r.to_url or '—' }}</td>
-          <td class="small">{{ r.reason or '' }}</td>
+          <th style="width:110px">дата</th>
+          <th>откуда</th>
+          <th>куда</th>
+          <th style="width:130px">цель</th>
+          <th style="width:170px">классификация</th>
+          <th>причина</th>
+          <th style="width:100px">слепок</th>
+        </tr>
+      </thead>
+      <tbody>
+      {% for r in ext_redirects %}
+        <tr class="{% if r.classification == 'review' %}row--alert{% endif %}">
+          <td class="mono">{{ r.captured_at.strftime('%Y-%m-%d') }}</td>
+          <td class="mono" style="color:var(--text-2);max-width:240px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{{ r.from_url }}</td>
+          <td class="mono" style="color:var(--text-2);max-width:240px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{{ r.to_url or '—' }}</td>
+          <td class="mono">{{ r.target_domain or '—' }}</td>
+          <td>
+            {% if r.classification == 'same_site' %}<span class="badge badge--clean">{{ icon("Check", 11) }}тот же сайт</span>
+            {% elif r.classification == 'company_move' %}<span class="badge badge--clean">{{ icon("Check", 11) }}переезд</span>
+            {% elif r.classification == 'review' %}<span class="badge badge--nuance">{{ icon("AlertTriangle", 11) }}обратить внимание</span>
+            {% else %}<span class="badge badge--neutral">{{ r.classification }}</span>{% endif %}
+          </td>
+          <td style="color:var(--text-2);font-size:12.5px">{{ r.reason or '' }}</td>
+          <td>{% if r.snapshot_url %}<a class="help-link" href="{{ r.snapshot_url }}" target="_blank" rel="noopener">открыть {{ icon("ExternalLink", 11) }}</a>{% else %}<span class="muted">—</span>{% endif %}</td>
         </tr>
       {% endfor %}
       </tbody>
     </table>
-  </details>
-  {% endif %}
-</section>
+    {% else %}
+    <div class="muted" style="font-size:13px">внешних редиректов нет</div>
+    {% endif %}
 
-<!-- B: Context -->
-<section class="card stack">
-  <h2 class="h2">Контекст</h2>
-  <div class="grid-2 small">
-    <div>
-      <div class="kv"><span>возраст в архиве</span><b>{{ domain.age_days }} дн</b></div>
-      <div class="kv"><span>первый захват</span><b class="mono">{{ domain.first_capture_at.strftime('%Y-%m-%d') if domain.first_capture_at else '—' }}</b></div>
-      <div class="kv"><span>последний захват</span><b class="mono">{{ domain.last_capture_at.strftime('%Y-%m-%d') if domain.last_capture_at else '—' }}</b></div>
+    {% if tech_redirects %}
+    <details style="margin-top:12px">
+      <summary style="cursor:pointer;padding:8px 0;color:var(--text-2);font-size:13px">
+        ▸ Технические редиректы (свой домен / схема / www) — {{ tech_redirects|length }}
+      </summary>
+      <div class="muted" style="padding:8px 0;font-size:12.5px">
+        Внутренние: http→https, www→корень, корень↔www. Не несут смысла для вердикта.
+      </div>
+    </details>
+    {% endif %}
+  </div>
+</details>
+
+{#- ===== Блок Б — Контекст ===== -#}
+<div class="card">
+  <div class="card__head">
+    {{ icon("Layers", 16, "var(--text-2)") }}
+    <span class="card__title">Контекст</span>
+  </div>
+  <div class="card__body">
+    <div class="kv" style="grid-template-columns:repeat(3,minmax(0,1fr));column-gap:28px">
+      <div class="kv__row"><span class="kv__k">возраст в архиве</span><span class="kv__v kv__v--mono">{{ domain.age_days or 0 }} дн</span></div>
+      <div class="kv__row"><span class="kv__k">всего захватов</span><span class="kv__v kv__v--mono">{{ domain.total_captures or 0 }}</span></div>
+      <div class="kv__row"><span class="kv__k">статус прогона</span><span class="kv__v">{{ status_pill(domain.status) }}</span></div>
+      <div class="kv__row"><span class="kv__k">первый захват</span><span class="kv__v kv__v--mono">{{ domain.first_capture_at.strftime('%Y-%m-%d') if domain.first_capture_at else '—' }}</span></div>
+      <div class="kv__row"><span class="kv__k">версий после схлопывания</span><span class="kv__v kv__v--mono">{{ domain.total_versions or 0 }}</span></div>
+      <div class="kv__row"><span class="kv__k">флагов</span><span class="kv__v">{{ (domain.risky_flag_count or 0) + (domain.review_flag_count or 0) }}</span></div>
+      <div class="kv__row"><span class="kv__k">последний захват</span><span class="kv__v kv__v--mono">{{ domain.last_capture_at.strftime('%Y-%m-%d') if domain.last_capture_at else '—' }}</span></div>
+      <div class="kv__row"><span class="kv__k">эпох</span><span class="kv__v">{{ epochs|length }}</span></div>
+      <div class="kv__row"><span class="kv__k">внешних редиректов</span><span class="kv__v">{{ ext_redirects|length }}</span></div>
     </div>
+
+    <div class="divider-h"></div>
+
+    <div class="row gap-3" style="margin-bottom:10px">
+      <div class="section-title" style="margin:0">Предполагаемые дропы</div>
+      <span class="badge badge--neutral">эвристика</span>
+      {% if drops|selectattr('source','equalto','llm')|list %}
+        <span class="badge badge--neutral">{{ icon("Activity", 11) }} усилено LLM</span>
+      {% endif %}
+    </div>
+
+    {% if drops %}
+    <table class="tbl">
+      <thead>
+        <tr>
+          <th style="width:110px">разрыв с</th>
+          <th style="width:110px">по</th>
+          <th style="width:80px">дней</th>
+          <th>было</th>
+          <th>стало</th>
+          <th style="width:90px">дроп?</th>
+          <th style="width:80px">увер.</th>
+          <th style="width:100px">источник</th>
+          <th>reason</th>
+        </tr>
+      </thead>
+      <tbody>
+      {% for d in drops %}
+        <tr>
+          <td class="mono">{{ d.gap_from.strftime('%Y-%m-%d') }}</td>
+          <td class="mono">{{ d.gap_to.strftime('%Y-%m-%d') }}</td>
+          <td class="mono">{{ d.gap_days }}</td>
+          <td>{{ category_chip(d.category_before, CATEGORY_BY_KEY) }}</td>
+          <td>{{ category_chip(d.category_after, CATEGORY_BY_KEY) }}</td>
+          <td>{% if d.is_drop %}<span class="badge badge--dirty">да</span>{% else %}<span class="badge badge--neutral">нет</span>{% endif %}</td>
+          <td class="mono">{% if d.confidence %}{{ '%.2f'|format(d.confidence) }}{% else %}—{% endif %}</td>
+          <td><span class="badge badge--neutral">{% if d.source == 'llm' %}{{ icon("Activity", 11) }}LLM{% else %}{{ icon("Eye", 11) }}эвристика{% endif %}</span></td>
+          <td style="color:var(--text-2);font-size:12.5px">{{ d.reason or '' }}</td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+    {% else %}
+      <div class="muted" style="font-size:13px">Подозрительных разрывов не найдено.</div>
+    {% endif %}
+  </div>
+</div>
+
+{#- ===== Блок В — Под капот (свёрнуто) ===== -#}
+<details class="card">
+  <summary class="collapse-head" style="list-style:none">
+    {{ icon("ChevronRight", 14, "var(--text-3)") }}
+    <span class="collapse-head__title">Под капот · логи и аудит</span>
+  </summary>
+  <div class="card__body col gap-4" style="border-top:1px solid var(--divider)">
     <div>
-      <div class="kv"><span>всего захватов</span><b>{{ domain.total_captures }}</b></div>
-      <div class="kv"><span>версий после схлопывания</span><b>{{ domain.total_versions }}</b></div>
-      <div class="kv"><span>статус</span><b><span class="badge {{ domain.status }}">{{ domain.status }}</span></b></div>
+      <div class="row" style="margin-bottom:10px">
+        <div class="section-title" style="margin:0">Лог проверки</div>
+        <span class="spacer"></span>
+        <a class="btn btn--sm" href="/domains/{{ domain.id }}/trace.txt">{{ icon("Download", 13) }} скачать .txt</a>
+      </div>
+      <div class="log">{% if domain.trace %}{% for line in domain.trace.split('\n') if line.strip() %}<div class="log__line"><span class="log__msg">{{ line }}</span></div>{% endfor %}{% else %}<div class="log__line"><span class="log__msg">(пусто)</span></div>{% endif %}</div>
+    </div>
+
+    <div>
+      <div class="section-title">Аудит вызовов LLM</div>
+      {% if llm_calls %}
+      <table class="tbl">
+        <thead>
+          <tr>
+            <th style="width:90px">время</th>
+            <th style="width:130px">роль</th>
+            <th>модель</th>
+            <th style="width:120px">токены</th>
+            <th style="width:90px">стоимость</th>
+            <th style="width:90px">latency</th>
+            <th>output</th>
+            <th style="width:70px">raw</th>
+            <th style="width:70px">input</th>
+          </tr>
+        </thead>
+        <tbody>
+        {% for c in llm_calls %}
+          <tr>
+            <td class="mono">{{ c.created_at.strftime('%H:%M:%S') }}</td>
+            <td><span class="badge badge--neutral mono">{{ c.role }}</span></td>
+            <td class="mono" style="color:var(--text-2)">{{ c.model }}</td>
+            <td class="mono" style="color:var(--text-2)">{{ c.prompt_tokens or '?' }} / {{ c.completion_tokens or '?' }}</td>
+            <td class="mono">{% if c.cost_usd %}${{ '%.4f'|format(c.cost_usd) }}{% else %}—{% endif %}</td>
+            <td class="mono" style="color:var(--text-2)">{{ c.latency_ms }}ms</td>
+            <td class="mono" style="font-size:11.5px;max-width:240px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="{{ c.output }}">{{ c.output }}</td>
+            <td>{% if c.raw_output %}<a class="help-link" href="#" onclick="event.preventDefault(); alert(`{{ c.raw_output|replace('`','\\`')|replace('\n','\\n') }}`)">raw</a>{% else %}—{% endif %}</td>
+            <td><a class="help-link" href="/api/llm_calls/{{ c.id }}/input.txt" target="_blank">input</a></td>
+          </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+      {% else %}
+      <div class="muted" style="font-size:13px">Вызовов LLM не было.</div>
+      {% endif %}
     </div>
   </div>
-
-  <h3 class="h3">Предполагаемые дропы <span class="chip muted small">эвристика</span></h3>
-  {% if drops %}
-  <table class="dense">
-    <thead><tr><th>разрыв с</th><th>по</th><th>дней</th><th>было</th><th>стало</th><th>дроп?</th><th>увер.</th><th>источник</th><th>reason</th></tr></thead>
-    <tbody>
-    {% for d in drops %}
-    <tr>
-      <td class="mono small">{{ d.gap_from.strftime('%Y-%m-%d') }}</td>
-      <td class="mono small">{{ d.gap_to.strftime('%Y-%m-%d') }}</td>
-      <td class="num">{{ d.gap_days }}</td>
-      <td class="small">{{ d.category_before|category_label if d.category_before else '—' }}</td>
-      <td class="small">{{ d.category_after|category_label if d.category_after else '—' }}</td>
-      <td>{% if d.is_drop %}<span class="badge review">да</span>{% else %}<span class="muted">нет</span>{% endif %}</td>
-      <td class="num">{% if d.confidence %}{{ '%.2f'|format(d.confidence) }}{% endif %}</td>
-      <td class="small">{{ d.source }}</td>
-      <td class="small">{{ d.reason }}</td>
-    </tr>
-    {% endfor %}
-    </tbody>
-  </table>
-  {% else %}<div class="muted">подозрительных разрывов не найдено</div>{% endif %}
-</section>
-
-<!-- C: Under the hood (collapsed by default) -->
-<details class="card">
-  <summary class="h2">Под капот · логи и аудит</summary>
-  <h3 class="h3">Лог проверки</h3>
-  <p class="small"><a class="btn small" href="/domains/{{ domain.id }}/trace.txt">Скачать .txt</a></p>
-  <pre class="trace">{{ domain.trace or '(пусто)' }}</pre>
-
-  <h3 class="h3">Аудит вызовов LLM</h3>
-  {% if llm_calls %}
-  <table class="dense">
-    <thead><tr><th>время</th><th>роль</th><th>модель</th><th>токены</th><th>стоимость</th><th>latency</th><th>output</th><th>raw</th><th>input</th></tr></thead>
-    <tbody>
-    {% for c in llm_calls %}
-    <tr>
-      <td class="mono small">{{ c.created_at.strftime('%H:%M:%S') }}</td>
-      <td class="small">{{ c.role }}</td>
-      <td class="mono small">{{ c.model }}</td>
-      <td class="num small">{{ c.prompt_tokens or '?' }}/{{ c.completion_tokens or '?' }}</td>
-      <td class="num small">{% if c.cost_usd %}${{ '%.5f'|format(c.cost_usd) }}{% endif %}</td>
-      <td class="num small">{{ c.latency_ms }}ms</td>
-      <td class="small mono clip" title="{{ c.output }}">{{ c.output }}</td>
-      <td class="small">{% if c.raw_output and not c.output %}<details><summary>raw</summary><pre class="small">{{ c.raw_output }}</pre></details>{% endif %}</td>
-      <td><a class="small" href="/api/llm_calls/{{ c.id }}/input.txt" target="_blank">input</a></td>
-    </tr>
-    {% endfor %}
-    </tbody>
-  </table>
-  {% else %}<div class="muted">вызовов LLM не было</div>{% endif %}
 </details>
+
+</div>
 
 {% endblock %}

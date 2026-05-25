@@ -1,76 +1,123 @@
 {% extends "base.html" %}
-{% block title %}Настройки — webarhive{% endblock %}
+{% from "_icons.html" import icon %}
+{% block title %}Настройки — Web Archive Checker{% endblock %}
 {% block content %}
-<section class="card stack prose">
-  <h1 class="h1">Настройки</h1>
-  <p class="muted small">Глобальные настройки действуют на будущие прогоны. Снимок копируется в каждый прогон (spec §11) — в истории видно, на каких параметрах считался конкретный прогон.</p>
 
-  {% if saved %}
-  <div class="bubble">Сохранено. Изменения применятся к следующему прогону.</div>
-  {% endif %}
+<div class="col gap-4" style="max-width:980px;margin:0 auto">
 
-  <form method="post" action="/settings" class="stack">
-    <h2 class="h2">Модели по ролям</h2>
-    <p class="small muted">Каждой роли можно назначить разную модель — классификацию обычно ставят дешёвой, вердикт — умной.</p>
-    <div class="grid-2">
-      <div>
-        <label class="label">classification</label>
-        <input type="text" name="model_classification" value="{{ fields.model_classification }}">
+{% if saved %}
+<div class="report-bar">
+  {{ icon("Check", 14, "var(--clean-fg)") }}
+  <span>Настройки сохранены. Изменения применятся к <b>следующему</b> прогону.</span>
+</div>
+{% endif %}
+
+<div class="card">
+  <div class="card__head">
+    {{ icon("Settings", 16, "var(--text-2)") }}
+    <span class="card__title">Настройки</span>
+    <span class="muted" style="font-size:12.5px;margin-left:4px">· глобальные, копируются снимком в каждый прогон</span>
+  </div>
+
+  <form method="post" action="/settings" class="card__body col gap-5">
+
+    {#- Модели по ролям -#}
+    <section class="col gap-3">
+      <div class="row gap-3">
+        <div class="section-title" style="margin:0">Модели по ролям</div>
+        <span class="muted" style="font-size:12px">формат OpenRouter: <code>провайдер/модель</code> (см. справку ниже)</span>
       </div>
-      <div>
-        <label class="label">verdict</label>
-        <input type="text" name="model_verdict" value="{{ fields.model_verdict }}">
+      <div class="form-grid">
+        <div class="field"><label class="field__lbl">classification (основная)</label><input class="input" name="model_classification" value="{{ fields.model_classification }}"></div>
+        <div class="field"><label class="field__lbl">verdict</label><input class="input" name="model_verdict" value="{{ fields.model_verdict }}"></div>
+        <div class="field"><label class="field__lbl">smart_drop</label><input class="input" name="model_smart_drop" value="{{ fields.model_smart_drop }}"></div>
+        <div class="field"><label class="field__lbl">redirect</label><input class="input" name="model_redirect" value="{{ fields.model_redirect }}"></div>
       </div>
-      <div>
-        <label class="label">smart_drop</label>
-        <input type="text" name="model_smart_drop" value="{{ fields.model_smart_drop }}">
+      <details class="muted" style="font-size:12px">
+        <summary style="cursor:pointer">примеры моделей OpenRouter</summary>
+        <ul style="margin:6px 0 0 22px;padding:0">
+          <li><code>openai/gpt-4o-mini</code> — дёшево и быстро (~$0.15/1M), хороший дефолт для classification</li>
+          <li><code>anthropic/claude-3.5-haiku</code>, <code>anthropic/claude-sonnet-4.5</code></li>
+          <li><code>google/gemini-2.0-flash-001</code> — самая дешёвая для большого объёма</li>
+          <li><code>meta-llama/llama-3.1-8b-instruct:free</code> — бесплатная (медленнее)</li>
+        </ul>
+        Полный каталог: <a class="help-link" href="https://openrouter.ai/models" target="_blank" rel="noopener">openrouter.ai/models {{ icon("ExternalLink", 11) }}</a>
+      </details>
+    </section>
+
+    {#- Роли LLM -#}
+    <section class="col gap-3">
+      <div class="section-title" style="margin:0">Роли LLM</div>
+      <div class="row gap-4" style="flex-wrap:wrap">
+        <label class="toggle {% if fields.enable_verdict %}toggle--on{% endif %}">
+          <input type="checkbox" name="enable_verdict" value="true" {% if fields.enable_verdict %}checked{% endif %} style="display:none" onchange="this.parentNode.classList.toggle('toggle--on', this.checked)">
+          <span class="toggle__box"></span><span>финальный вердикт (чистый / нюансы / грязный)</span>
+        </label>
+        <label class="toggle {% if fields.enable_smart_drop %}toggle--on{% endif %}">
+          <input type="checkbox" name="enable_smart_drop" value="true" {% if fields.enable_smart_drop %}checked{% endif %} style="display:none" onchange="this.parentNode.classList.toggle('toggle--on', this.checked)">
+          <span class="toggle__box"></span><span>умное определение дропа</span>
+        </label>
+        <label class="toggle {% if fields.enable_redirect_llm %}toggle--on{% endif %}">
+          <input type="checkbox" name="enable_redirect_llm" value="true" {% if fields.enable_redirect_llm %}checked{% endif %} style="display:none" onchange="this.parentNode.classList.toggle('toggle--on', this.checked)">
+          <span class="toggle__box"></span><span>LLM-решение по редиректу</span>
+        </label>
       </div>
-      <div>
-        <label class="label">redirect</label>
-        <input type="text" name="model_redirect" value="{{ fields.model_redirect }}">
+    </section>
+
+    {#- Лимиты -#}
+    <section class="col gap-3">
+      <div class="section-title" style="margin:0">Лимиты и пороги</div>
+      <div class="form-grid">
+        <div class="field"><label class="field__lbl">max_llm_calls_per_domain</label><input class="input" type="number" min="1" max="500" name="max_llm_calls_per_domain" value="{{ fields.max_llm_calls_per_domain }}"></div>
+        <div class="field"><label class="field__lbl">cost_budget_per_domain ($)</label><input class="input" type="number" step="0.01" name="cost_budget_per_domain" value="{{ fields.cost_budget_per_domain }}"></div>
+        <div class="field"><label class="field__lbl">text_limit (тело страницы)</label><input class="input" type="number" min="200" max="20000" name="text_limit" value="{{ fields.text_limit }}"></div>
+        <div class="field"><label class="field__lbl">title_shift_threshold</label><input class="input" type="number" min="0" max="20" name="title_shift_threshold" value="{{ fields.title_shift_threshold }}"><div class="field__hint">слов разницы в title+desc+h1 для пересчёта</div></div>
       </div>
-    </div>
+    </section>
 
-    <h2 class="h2">Роли LLM (включить/выключить)</h2>
-    <div class="row gap">
-      <label><input type="checkbox" name="enable_verdict" value="true" {% if fields.enable_verdict %}checked{% endif %}> вердикт</label>
-      <label><input type="checkbox" name="enable_smart_drop" value="true" {% if fields.enable_smart_drop %}checked{% endif %}> умный дроп</label>
-      <label><input type="checkbox" name="enable_redirect_llm" value="true" {% if fields.enable_redirect_llm %}checked{% endif %}> LLM-решение по редиректу</label>
-    </div>
+    {#- Параллелизм + троттлинг -#}
+    <section class="col gap-3">
+      <div class="section-title" style="margin:0">Параллелизм и троттлинг IA</div>
+      <div class="form-grid">
+        <div class="field"><label class="field__lbl">concurrency (доменов одновременно)</label><input class="input" type="number" min="1" max="20" name="concurrency" value="{{ fields.concurrency }}"></div>
+        <div class="field"><label class="field__lbl">ia_rate_limit (req/sec)</label><input class="input" type="number" step="0.1" name="ia_rate_limit" value="{{ fields.ia_rate_limit }}"></div>
+        <div class="field"><label class="field__lbl">ia_backoff (сек, база)</label><input class="input" type="number" step="0.1" name="ia_backoff" value="{{ fields.ia_backoff }}"></div>
+        <div class="field"><label class="field__lbl">ia_max_retries</label><input class="input" type="number" min="0" max="20" name="ia_max_retries" value="{{ fields.ia_max_retries }}"></div>
+      </div>
+    </section>
 
-    <h2 class="h2">Лимиты и пороги</h2>
-    <div class="grid-2">
-      <div><label class="label">MAX_LLM_CALLS_PER_DOMAIN</label><input type="number" name="max_llm_calls_per_domain" min="1" max="500" value="{{ fields.max_llm_calls_per_domain }}"></div>
-      <div><label class="label">COST_BUDGET_PER_DOMAIN ($)</label><input type="number" step="0.01" name="cost_budget_per_domain" value="{{ fields.cost_budget_per_domain }}"></div>
-      <div><label class="label">TEXT_LIMIT (тело)</label><input type="number" name="text_limit" min="200" max="20000" value="{{ fields.text_limit }}"></div>
-      <div><label class="label">TITLE_SHIFT_THRESHOLD</label><input type="number" name="title_shift_threshold" min="0" max="20" value="{{ fields.title_shift_threshold }}"></div>
-    </div>
+    {#- Вход -#}
+    <section class="col gap-3">
+      <div class="section-title" style="margin:0">Вход</div>
+      <label class="toggle {% if fields.check_subdomains %}toggle--on{% endif %}">
+        <input type="checkbox" name="check_subdomains" value="true" {% if fields.check_subdomains %}checked{% endif %} style="display:none" onchange="this.parentNode.classList.toggle('toggle--on', this.checked)">
+        <span class="toggle__box"></span><span>анализировать поддомены как отдельные сущности (matchType=host)</span>
+      </label>
+    </section>
 
-    <h2 class="h2">Параллелизм и троттлинг IA</h2>
-    <div class="grid-2">
-      <div><label class="label">CONCURRENCY (доменов одновременно)</label><input type="number" name="concurrency" min="1" max="20" value="{{ fields.concurrency }}"></div>
-      <div><label class="label">IA_RATE_LIMIT (req/sec)</label><input type="number" step="0.1" name="ia_rate_limit" value="{{ fields.ia_rate_limit }}"></div>
-      <div><label class="label">IA_BACKOFF (сек, база)</label><input type="number" step="0.1" name="ia_backoff" value="{{ fields.ia_backoff }}"></div>
-      <div><label class="label">IA_MAX_RETRIES</label><input type="number" min="0" max="20" name="ia_max_retries" value="{{ fields.ia_max_retries }}"></div>
-    </div>
-
-    <h2 class="h2">Вход</h2>
-    <label><input type="checkbox" name="check_subdomains" value="true" {% if fields.check_subdomains %}checked{% endif %}> CHECK_SUBDOMAINS — анализировать поддомены как отдельные сущности</label>
-
-    <div class="row gap">
-      <button class="btn primary" type="submit">Сохранить</button>
-      <a class="btn" href="/">Отмена</a>
+    <div class="row gap-2" style="border-top:1px dashed var(--divider);padding-top:14px">
+      <button class="btn btn--primary" type="submit">{{ icon("Check", 13) }} сохранить</button>
+      <a class="btn" href="/">отмена</a>
     </div>
   </form>
+</div>
 
-  <h2 class="h2">Секреты и развёртывание</h2>
-  <p class="small muted">Эти параметры берутся только из env-файла, не редактируются через UI.</p>
-  <div class="kv"><span>OPENROUTER_API_KEY</span><b>{% if settings.openrouter_api_key %}✓ задан ({{ settings.openrouter_api_key[:6] }}…){% else %}<span class="verdict-dirty">не задан — классификация и вердикт не сработают</span>{% endif %}</b></div>
-  <div class="kv"><span>APP_DOMAIN</span><b class="mono">{{ settings.app_domain }}</b></div>
-  <div class="kv"><span>DATABASE_URL</span><b class="mono small clip">{{ settings.database_url }}</b></div>
-  <div class="kv"><span>TRUST_PROXY_HEADERS</span><b>{{ 'да' if settings.trust_proxy_headers else 'нет' }}</b></div>
+{#- Секреты и развёртывание (read-only) -#}
+<div class="card">
+  <div class="card__head">
+    {{ icon("ShieldCheck", 16, "var(--text-2)") }}
+    <span class="card__title">Секреты и развёртывание</span>
+    <span class="muted" style="font-size:12.5px;margin-left:4px">· только из .env, не редактируется</span>
+  </div>
+  <div class="card__body">
+    <div class="kv" style="grid-template-columns:repeat(2,minmax(0,1fr));column-gap:28px">
+      <div class="kv__row"><span class="kv__k">OPENROUTER_API_KEY</span><span class="kv__v">{% if settings.openrouter_api_key %}✓ задан ({{ settings.openrouter_api_key[:6] }}…){% else %}<span style="color:var(--dirty-fg)">не задан</span>{% endif %}</span></div>
+      <div class="kv__row"><span class="kv__k">APP_DOMAIN</span><span class="kv__v kv__v--mono">{{ settings.app_domain }}</span></div>
+      <div class="kv__row"><span class="kv__k">DATABASE_URL</span><span class="kv__v kv__v--mono" style="max-width:280px;overflow:hidden;text-overflow:ellipsis">{{ settings.database_url }}</span></div>
+      <div class="kv__row"><span class="kv__k">TRUST_PROXY_HEADERS</span><span class="kv__v">{{ 'да' if settings.trust_proxy_headers else 'нет' }}</span></div>
+    </div>
+  </div>
+</div>
 
-  <h2 class="h2">Текущий снимок (для отладки)</h2>
-  <pre class="mono small">{{ settings.snapshot()|tojson(indent=2) }}</pre>
-</section>
+</div>
 {% endblock %}

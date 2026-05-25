@@ -1,25 +1,47 @@
-<!doctype html>
+<!DOCTYPE html>
+{% from "_icons.html" import icon %}
 <html lang="ru">
 <head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width,initial-scale=1">
-  <title>{% block title %}webarhive{% endblock %}</title>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=1366">
+  <title>{% block title %}Web Archive Checker{% endblock %}</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="/static/css/app.css">
-  <script src="https://unpkg.com/htmx.org@1.9.12" defer></script>
-  <script src="https://unpkg.com/lucide@latest" defer></script>
 </head>
 <body>
+<div class="app">
+
+  {#- ===== Topbar ===== -#}
   <header class="topbar">
-    <a class="brand" href="/">webarhive</a>
-    <nav>
-      <a href="/" class="navlink">Прогоны</a>
-      <a href="/settings" class="navlink">Настройки</a>
-      <a href="/help" class="navlink">Справка</a>
-    </nav>
+    <a href="/" class="topbar__logo" style="text-decoration:none">
+      <span class="topbar__logo-mark">{{ icon("History", 13) }}</span>
+      <span>Web Archive Checker</span>
+    </a>
+    <div class="topbar__crumbs">
+      {%- set crumbs = crumbs or [] -%}
+      <a href="/" class="crumb {% if not crumbs %}crumb--current{% endif %}">
+        <span class="row gap-2">{{ icon("Layers", 13) }}Прогоны</span>
+      </a>
+      {%- for c in crumbs -%}
+        {{ icon("ChevronRight", 13, "var(--text-3)") }}
+        {%- if c.href -%}
+          <a href="{{ c.href }}" class="crumb {% if loop.last %}crumb--current{% endif %} {% if c.mono %}crumb--mono{% endif %}">{{ c.label }}{% if c.sub %} <span class="muted" style="font-size:11.5px;white-space:nowrap">{{ c.sub }}</span>{% endif %}</a>
+        {%- else -%}
+          <span class="crumb crumb--current {% if c.mono %}crumb--mono{% endif %}">{{ c.label }}{% if c.sub %} <span class="muted" style="font-size:11.5px;white-space:nowrap">{{ c.sub }}</span>{% endif %}</span>
+        {%- endif -%}
+      {%- endfor -%}
+    </div>
+    <div class="topbar__actions">
+      <a href="/help" class="btn btn--ghost btn--sm">{{ icon("Book", 13) }} справка</a>
+      <a href="/settings" class="btn btn--ghost btn--sm">{{ icon("Settings", 13) }} настройки</a>
+    </div>
   </header>
-  <main class="page">
+
+  <main class="main">
     {% block content %}{% endblock %}
   </main>
-  <script>document.addEventListener("DOMContentLoaded", () => { if (window.lucide) lucide.createIcons(); });</script>
+</div>
 </body>
 </html>

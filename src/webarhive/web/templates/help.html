@@ -1,66 +1,97 @@
 {% extends "base.html" %}
-{% block title %}Справка — webarhive{% endblock %}
+{% from "_icons.html" import icon %}
+{% block title %}Справка — Web Archive Checker{% endblock %}
 {% block content %}
-<section class="card stack prose">
-  <h1 class="h1">Справка</h1>
 
-  <h2 class="h2">Возраст ≠ дата регистрации</h2>
-  <p>За «возраст» принимается дата <b>первой активности домена в архиве Wayback Machine</b>. Это не дата регистрации домена в реестре — Wayback её не знает. Принимаем как осознанное допущение.</p>
+<div class="col gap-4" style="max-width:880px;margin:0 auto">
 
-  <h2 class="h2">Вердикты</h2>
-  <ul>
-    <li><span class="verdict-badge v-clean"><i data-lucide="check"></i> чистый</span> — однородная тематика без рисковых эпох и без подозрительных редиректов.</li>
-    <li><span class="verdict-badge v-nuanced"><i data-lucide="alert-triangle"></i> есть нюансы</span> — флаги «обратить внимание» по редиректам, парковка длительно, один-два разрыва без явной рисковой тематики.</li>
-    <li><span class="verdict-badge v-dirty"><i data-lucide="octagon-x"></i> грязный</span> — присутствуют рисковые категории (казино/адалт/фарма/займы/варез/дорвей), редирект-перехват или множественные дропы со сменой тематики.</li>
-  </ul>
+<div class="card">
+  <div class="card__head">{{ icon("Book", 16, "var(--text-2)") }}<span class="card__title">Справка</span></div>
+  <div class="card__body col gap-5" style="font-size:14px;line-height:1.6">
 
-  <h2 class="h2">Категории тематики</h2>
-  <div class="grid-3">
-    {% for c in CATEGORIES %}
-    <div class="kv-cat">
-      <i data-lucide="{{ c.icon }}"></i>
-      <div>
-        <div><b>{{ c.label_ru }}</b> <span class="chip muted small">{{ c.group.value }}</span></div>
-        <div class="small muted">{{ c.description }}</div>
+    <section>
+      <div class="section-title" style="margin:0 0 8px">Возраст ≠ дата регистрации</div>
+      <p style="margin:0">За «возраст» принимается дата <b>первой активности домена в архиве Wayback Machine</b>. Это не дата регистрации домена в реестре — Wayback её не знает.</p>
+    </section>
+
+    <section>
+      <div class="section-title" style="margin:0 0 8px">Вердикты</div>
+      <div class="row gap-2" style="flex-wrap:wrap;margin-bottom:8px">
+        <span class="badge badge--clean">{{ icon("Check", 12) }}чистый</span>
+        <span class="muted">— однородная тематика, без рисковых эпох и подозрительных редиректов.</span>
       </div>
-    </div>
-    {% endfor %}
+      <div class="row gap-2" style="flex-wrap:wrap;margin-bottom:8px">
+        <span class="badge badge--nuance">{{ icon("AlertTriangle", 12) }}есть нюансы</span>
+        <span class="muted">— флаги «обратить внимание» по редиректам, длительная парковка, один-два разрыва без явной рисковой тематики.</span>
+      </div>
+      <div class="row gap-2" style="flex-wrap:wrap">
+        <span class="badge badge--dirty">{{ icon("Octagon", 12) }}грязный</span>
+        <span class="muted">— рисковые категории в любую эпоху, редирект-перехват, множественные дропы со сменой тематики.</span>
+      </div>
+    </section>
+
+    <section>
+      <div class="section-title" style="margin:0 0 8px">Категории тематики</div>
+      <div style="display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px 16px">
+        {% for c in CATEGORIES %}
+        <div class="row gap-2" style="align-items:flex-start;padding:4px 0">
+          <span class="cat-ico {% if c.group.value == 'risky' %}cat-ico--risk{% elif c.group.value == 'service' %}cat-ico--util{% endif %}">{{ icon(c.icon, 13) }}</span>
+          <div>
+            <div style="font-weight:500">{{ c.label_ru }} <span class="muted" style="font-size:11px">{{ c.group.value }}</span></div>
+            <div class="muted" style="font-size:12px">{{ c.description }}</div>
+          </div>
+        </div>
+        {% endfor %}
+      </div>
+      <p class="muted" style="margin:10px 0 0;font-size:12px">При наличии и нейтрального, и рискового контента — выбирается рисковое.</p>
+    </section>
+
+    <section>
+      <div class="section-title" style="margin:0 0 8px">Лента эпох</div>
+      <p>Горизонтальная полоса «период → категория». Каждый блок — это эпоха, в которую тематика не менялась. Рисковые эпохи помечены красноватым цветом и иконкой (что именно). Длительные «мёртвые» промежутки сжимаются.</p>
+    </section>
+
+    <section>
+      <div class="section-title" style="margin:0 0 8px">Редиректы и «обратить внимание»</div>
+      <ul style="margin:0;padding-left:22px">
+        <li><b>Технический</b> — внутри того же домена (например, <code>www</code> → корень). В карточку сворачивается под раздел.</li>
+        <li><b>Тот же сайт</b> — то же имя, другая зона / поддомен.</li>
+        <li><b>Переезд компании</b> — другой домен, но та же компания по контенту/бренду.</li>
+        <li><b>Обратить внимание</b> — при сомнении уходит сюда. Всегда есть ссылка-слепок на Wayback для ручной проверки.</li>
+      </ul>
+    </section>
+
+    <section>
+      <div class="section-title" style="margin:0 0 8px">Предполагаемые дропы</div>
+      <p>В архиве нет прямого флага дропа. Выводим по эвристике: длинный разрыв (год+) + смена тематики после возобновления. Подаётся <b>как предположение</b>, не как факт. При включённом <code>ENABLE_SMART_DROP</code> разрывы дополнительно проверяются LLM.</p>
+    </section>
+
+    <section>
+      <div class="section-title" style="margin:0 0 8px">Полотно без LLM-вердикта</div>
+      <p>Если выключен <code>ENABLE_VERDICT</code>, колонка вердикта пустая. Ориентируйтесь на флаги: рисковые иконки и «обратить внимание». Строки с флагами подсвечиваются на полотне.</p>
+    </section>
+
+    <section>
+      <div class="section-title" style="margin:0 0 8px">Модели OpenRouter</div>
+      <p>В поле «модель» нужно вписывать имя в формате <code>провайдер/модель</code> — OpenRouter маршрутизирует к нужному провайдеру:</p>
+      <ul style="margin:0;padding-left:22px">
+        <li><code>openai/gpt-4o-mini</code> — дёшево и быстро</li>
+        <li><code>anthropic/claude-3.5-haiku</code>, <code>anthropic/claude-sonnet-4.5</code></li>
+        <li><code>google/gemini-2.0-flash-001</code> — самая дешёвая</li>
+        <li><code>meta-llama/llama-3.1-8b-instruct:free</code> — бесплатная</li>
+      </ul>
+      <p>Полный каталог: <a class="help-link" href="https://openrouter.ai/models" target="_blank" rel="noopener">openrouter.ai/models {{ icon("ExternalLink", 11) }}</a>.</p>
+    </section>
+
+    <section>
+      <div class="section-title" style="margin:0 0 8px">FAQ</div>
+      <p><b>Прогон долго идёт.</b> Это нормально: Internet Archive троттлит. Прогресс-бар и счётчики живые. Прерывать только если совсем встало.</p>
+      <p><b>Прервался посередине.</b> На странице прогона есть кнопка «повторить» — создаст новый прогон с теми же доменами и настройками.</p>
+      <p><b>Домен «нет данных».</b> Его нет в архиве Wayback. Это не ошибка — это диагноз.</p>
+      <p><b>Прогон с включёнными LLM-ролями встал.</b> Скорее всего на одном из доменов очень много REVIEW-редиректов на мёртвые цели; per-domain timeout (10 мин по умолчанию) его прервёт.</p>
+    </section>
+
   </div>
-  <p class="small muted">Если на странице есть и нейтральное, и рисковое — выбирается рисковое.</p>
-
-  <h2 class="h2">Лента эпох</h2>
-  <p>Горизонтальная полоса блоков «период → категория». Каждый блок — это эпоха, в которую тематика не менялась. Рисковые эпохи помечены красноватым (цвет) и иконкой (что именно). При наведении — даты, категория, уверенность модели, причина.</p>
-  <p>Длительные «мёртвые» промежутки сжимаются, насыщенные периоды читаются — линейная шкала сожгла бы редкий захват в кашу.</p>
-
-  <h2 class="h2">Редиректы и «обратить внимание»</h2>
-  <p>3xx-снапшоты разбираются — куда вёл редирект. Классификация:</p>
-  <ul>
-    <li><b>Технический</b> — внутри того же домена (например, <code>www</code> → корень), в карточку не выводится.</li>
-    <li><b>Тот же сайт</b> — то же имя, другая зона / поддомен.</li>
-    <li><b>Переезд компании</b> — другой домен, но та же компания по контенту/бренду.</li>
-    <li><b>Обратить внимание</b> — другой владелец, тематика на той стороне не подтверждает связь. При сомнении уходит сюда (перестраховка). Всегда есть ссылка-слепок на Wayback для ручной проверки.</li>
-  </ul>
-
-  <h2 class="h2">Предполагаемые дропы</h2>
-  <p>В архиве нет прямого флага дропа. Выводим по эвристике: длинный разрыв (год+) + смена тематики после возобновления. Подаём <b>как предположение</b>, не как факт.</p>
-
-  <h2 class="h2">Полотно без LLM-вердикта</h2>
-  <p>Если <code>ENABLE_VERDICT</code> выключен — колонка вердикта пустая, цветовая семантика чистый/нюансы/грязный недоступна. Ориентируйтесь на флаги: рисковые иконки и «обратить внимание». Сортировка/фильтр по флагам в этом режиме — основной способ просеять список.</p>
-
-  <h2 class="h2">Настройки</h2>
-  <ul>
-    <li><code>CONCURRENCY</code> — сколько доменов в работе одновременно. Узкое место — троттлинг Internet Archive, не CPU. Дефолт 3–5.</li>
-    <li><code>IA_RATE_LIMIT</code>, <code>IA_BACKOFF</code> — общий вентиль на все параллельные домены. Из коробки безопасно.</li>
-    <li><code>MAX_LLM_CALLS_PER_DOMAIN</code> — потолок вызовов модели на домен. Если упёрлись — проверка помечается «частично».</li>
-    <li><code>TITLE_SHIFT_THRESHOLD</code> — порог изменения тематики. Версия идёт в модель, только если в title+description+h1 изменилось значимых слов больше порога. Дефолт 2.</li>
-    <li><code>CHECK_SUBDOMAINS</code> — анализировать поддомены как отдельные сущности (сужает CDX до <code>matchType=host</code>).</li>
-    <li>Модели по ролям — классификация / вердикт / умный дроп / редирект могут быть разными. Параметр, не хардкод.</li>
-    <li>Каждая роль (вердикт, умный дроп, решение по редиректу) включается/выключается отдельно.</li>
-  </ul>
-
-  <h2 class="h2">FAQ</h2>
-  <p><b>Прогон долго идёт.</b> Это нормально: Internet Archive троттлит. Прогресс-бар и счётчики живые. Прерывать только если совсем встало.</p>
-  <p><b>Прервался посередине.</b> Запустите тот же прогон ещё раз — он подхватит pending-домены и не будет переделывать готовые.</p>
-  <p><b>Домен «нет данных».</b> Его нет в архиве Wayback. Это не ошибка — это диагноз. Возможно, домен молодой или Wayback его никогда не пускал.</p>
-</section>
+</div>
+</div>
 {% endblock %}

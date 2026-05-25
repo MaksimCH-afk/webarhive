@@ -1,150 +1,147 @@
 {% extends "base.html" %}
-{% block title %}Прогон #{{ run.id }} — webarhive{% endblock %}
+{% from "_icons.html" import icon %}
+{% from "_components.html" import verdict_badge, verdict_strip, status_pill, flag_stack %}
+{% block title %}Прогон #{{ run.id }} — Web Archive Checker{% endblock %}
 {% block content %}
 
-<details class="card compact">
-  <summary class="h2">
-    Прогон #{{ run.id }} · {{ run.started_at.strftime('%Y-%m-%d %H:%M') }} ·
-    <span class="badge {{ run.status }}">{{ run.status }}</span>
-    {% if run.status in ('aborted', 'finished', 'error') %}
-      <button type="button" class="btn small"
-              style="margin-left: 12px"
-              onclick="event.stopPropagation(); rerun({{ run.id }})">
-        ⟳ повторить с теми же настройками
-      </button>
+{% set snap = run.settings_snapshot or {} %}
+{% set models = snap.get("models", {}) %}
+{% set roles = snap.get("roles", {}) %}
+{% set throttle = snap.get("throttle", {}) %}
+{% set limits = snap.get("limits", {}) %}
+
+<div class="col gap-4">
+
+{#- ===== Шапка прогона (сворачиваемая) ===== -#}
+<div class="card">
+  <details {% if run.status == 'running' %}open{% endif %}>
+    <summary class="collapse-head" style="list-style:none">
+      {{ icon("ChevronRight", 14, "var(--text-3)") }}
+      <span class="collapse-head__title">Прогон #{{ run.id }}</span>
+      <span class="muted mono" style="font-size:12.5px">· {{ run.started_at.strftime('%Y-%m-%d %H:%M') }}</span>
+      {{ status_pill(run.status) }}
+      <span class="spacer"></span>
+      <span class="row gap-3" onclick="event.stopPropagation()">
+        <span class="badge badge--clean">{{ run.clean_count }} чистых</span>
+        <span class="badge badge--nuance">{{ run.nuanced_count }} нюансов</span>
+        <span class="badge badge--dirty">{{ run.dirty_count }} грязных</span>
+        {% if run.error_count %}<span class="badge badge--error">{{ run.error_count }} ошибок</span>{% endif %}
+        {% if run.status in ('finished', 'aborted', 'error') %}
+          <button type="button" class="btn btn--sm" onclick="event.stopPropagation(); rerun({{ run.id }})">
+            {{ icon("History", 13) }} повторить
+          </button>
+        {% endif %}
+      </span>
+    </summary>
+    <div class="card__body" style="border-top:1px solid var(--divider)">
+      <div class="kv" style="grid-template-columns:repeat(4,minmax(0,1fr));column-gap:28px">
+        <div class="kv__row"><span class="kv__k">модель классификации</span><span class="kv__v kv__v--mono">{{ models.get('classification','—') }}</span></div>
+        <div class="kv__row"><span class="kv__k">модель вердикта</span><span class="kv__v kv__v--mono">{{ models.get('verdict','—') }}</span></div>
+        <div class="kv__row"><span class="kv__k">параллелизм</span><span class="kv__v">{{ throttle.get('concurrency','—') }}</span></div>
+        <div class="kv__row"><span class="kv__k">лимит LLM/домен</span><span class="kv__v">{{ limits.get('max_llm_calls_per_domain','—') }}</span></div>
+        <div class="kv__row"><span class="kv__k">порог сдвига темы</span><span class="kv__v">{{ limits.get('title_shift_threshold','—') }}</span></div>
+        <div class="kv__row"><span class="kv__k">поддомены</span><span class="kv__v">{{ 'да' if snap.get('input',{}).get('check_subdomains') else 'нет' }}</span></div>
+        <div class="kv__row"><span class="kv__k">роли LLM</span><span class="kv__v" style="font-size:11.5px">{% set role_list = [] %}{% if roles.get('verdict') %}{% set _ = role_list.append('verdict') %}{% endif %}{% if roles.get('smart_drop') %}{% set _ = role_list.append('smart_drop') %}{% endif %}{% if roles.get('redirect_llm') %}{% set _ = role_list.append('redirect_llm') %}{% endif %}{{ role_list|join(' · ') or '—' }}</span></div>
+        <div class="kv__row"><span class="kv__k">заметка</span><span class="kv__v">{{ run.note or '—' }}</span></div>
+      </div>
+    </div>
+  </details>
+</div>
+
+{#- ===== Полотно ===== -#}
+<div class="card">
+  <form class="toolbar" method="get" id="filter-form">
+    <div class="search">
+      {{ icon("Search", 14) }}
+      <input class="input" name="q" placeholder="поиск по домену…" value="{{ filters.q or '' }}">
+    </div>
+    <div class="divider-v"></div>
+
+    {% set vf = filters.verdict %}
+    <a class="chip {% if not vf %}chip--active{% endif %}" href="?{{ filters.qs_without('verdict') }}">все <span class="muted mono" style="font-size:11px;margin-left:2px">{{ counts.all }}</span></a>
+    <a class="chip {% if vf == 'clean' %}chip--active{% endif %}" href="?{{ filters.qs_with('verdict','clean') }}">
+      {{ icon("Check", 11, "var(--clean-fg)") }} чистые <span class="muted mono" style="font-size:11px">{{ counts.clean }}</span></a>
+    <a class="chip {% if vf == 'nuanced' %}chip--active{% endif %}" href="?{{ filters.qs_with('verdict','nuanced') }}">
+      {{ icon("AlertTriangle", 11, "var(--nuance-fg)") }} нюансы <span class="muted mono" style="font-size:11px">{{ counts.nuanced }}</span></a>
+    <a class="chip {% if vf == 'dirty' %}chip--active{% endif %}" href="?{{ filters.qs_with('verdict','dirty') }}">
+      {{ icon("Octagon", 11, "var(--dirty-fg)") }} грязные <span class="muted mono" style="font-size:11px">{{ counts.dirty }}</span></a>
+
+    <div class="divider-v"></div>
+
+    <a class="chip {% if filters.risky_only %}chip--active{% endif %}" href="?{{ filters.qs_toggle('risky_only') }}">
+      {{ icon("Octagon", 11) }} риск</a>
+    <a class="chip {% if filters.review_only %}chip--active{% endif %}" href="?{{ filters.qs_toggle('review_only') }}">
+      {{ icon("AlertTriangle", 11) }} внимание</a>
+
+    <span class="spacer"></span>
+
+    <select class="select" name="sort" onchange="this.form.submit()">
+      <option value="id"      {% if filters.sort == 'id' %}selected{% endif %}>порядок ввода</option>
+      <option value="age"     {% if filters.sort == 'age' %}selected{% endif %}>возраст ↓</option>
+      <option value="verdict" {% if filters.sort == 'verdict' %}selected{% endif %}>по вердикту</option>
+      <option value="flags"   {% if filters.sort == 'flags' %}selected{% endif %}>по числу флагов</option>
+    </select>
+    <a class="btn btn--sm" href="/api/runs/{{ run.id }}/export.csv?{{ filters.qs() }}">{{ icon("Download", 13) }} экспорт CSV</a>
+  </form>
+
+  <div class="card__body card__body--p0">
+    {% if not domains %}
+      <div class="empty">
+        <div class="empty__ico">{{ icon("Filter", 22) }}</div>
+        <div style="font-weight:600;color:var(--text)">Ничего не найдено</div>
+        <div class="muted">Сбросьте фильтры или измените запрос.</div>
+      </div>
+    {% else %}
+      <table class="tbl">
+        <thead>
+          <tr>
+            <th>домен</th>
+            <th style="width:170px">вердикт</th>
+            <th style="width:100px">возраст</th>
+            <th style="width:70px">эпох</th>
+            <th style="width:130px">флаги</th>
+            <th style="width:100px">статус</th>
+            <th style="width:30px"></th>
+          </tr>
+        </thead>
+        <tbody>
+        {% for d in domains %}
+          {% set has_alert = d.risky_flag_count or d.review_flag_count or d.status in ('error','no_data') %}
+          {% set row_cls = 'row--clickable' %}
+          {% if d.verdict == 'dirty' %}{% set row_cls = row_cls + ' row--dirty' %}
+          {% elif has_alert and not d.verdict %}{% set row_cls = row_cls + ' row--alert' %}
+          {% endif %}
+          <tr class="{{ row_cls }}" onclick="location.href='/domains/{{ d.id }}'">
+            <td>
+              <div class="domain-row">
+                {{ verdict_strip(d.verdict, d.status) }}
+                <span class="mono" style="color:var(--text)">{{ d.domain }}</span>
+              </div>
+            </td>
+            <td>{{ verdict_badge(d.verdict, d.status) }}</td>
+            <td class="mono" style="color:var(--text-2)">{% if d.age_days %}{{ d.age_days }} дн{% else %}<span class="muted">—</span>{% endif %}</td>
+            <td class="mono" style="color:var(--text-2)">{{ d.total_versions or 0 }}</td>
+            <td>{{ flag_stack(d, d.epochs, CATEGORY_BY_KEY, d.redirects) }}</td>
+            <td>{{ status_pill(d.status) }}</td>
+            <td style="text-align:right">{{ icon("ChevronRight", 16, "var(--text-3)") }}</td>
+          </tr>
+        {% endfor %}
+        </tbody>
+      </table>
     {% endif %}
-  </summary>
-  <div class="grid-2 small">
-    <div>
-      <div class="kv"><span>модель классификации</span><b class="mono">{{ run.settings_snapshot.get('models',{}).get('classification','') }}</b></div>
-      <div class="kv"><span>модель вердикта</span><b class="mono">{{ run.settings_snapshot.get('models',{}).get('verdict','') }}</b></div>
-      <div class="kv"><span>параллелизм</span><b>{{ run.settings_snapshot.get('throttle',{}).get('concurrency','') }}</b></div>
-      <div class="kv"><span>лимит LLM/домен</span><b>{{ run.settings_snapshot.get('limits',{}).get('max_llm_calls_per_domain','') }}</b></div>
-    </div>
-    <div>
-      <div class="kv"><span>порог сдвига темы</span><b>{{ run.settings_snapshot.get('limits',{}).get('title_shift_threshold','') }}</b></div>
-      <div class="kv"><span>проверять поддомены</span><b>{{ 'да' if run.settings_snapshot.get('input',{}).get('check_subdomains') else 'нет' }}</b></div>
-      <div class="kv"><span>роли LLM</span><b>{{ 'verdict ' if run.settings_snapshot.get('roles',{}).get('verdict') }}{{ 'smart_drop ' if run.settings_snapshot.get('roles',{}).get('smart_drop') }}{{ 'redirect_llm' if run.settings_snapshot.get('roles',{}).get('redirect_llm') }}{% if not run.settings_snapshot.get('roles',{}).values()|select|list %}—{% endif %}</b></div>
-      <div class="kv"><span>заметка</span><b>{{ run.note or '—' }}</b></div>
-    </div>
   </div>
-</details>
+</div>
+
+</div>
 
 <script>
 async function rerun(runId) {
-  if (!confirm('Запустить новый прогон с теми же ' +
-               '{{ run.total_domains }} доменами и настройками?')) return;
-  const r = await fetch('/api/runs/' + runId + '/rerun', { method: 'POST' });
-  if (!r.ok) { alert('Не удалось перезапустить: ' + r.status); return; }
+  if (!confirm("Запустить новый прогон с теми же {{ run.total_domains }} доменами и настройками?")) return;
+  const r = await fetch("/api/runs/" + runId + "/rerun", { method: "POST" });
+  if (!r.ok) { alert("Не удалось: " + r.status); return; }
   const data = await r.json();
   location.href = data.redirect;
 }
 </script>
-
-{% if run.status == 'running' %}
-<section class="card live" id="live-progress">
-  <div class="row-between">
-    <h2 class="h2">Идёт обработка</h2>
-    <form hx-post="/api/runs/{{ run.id }}/abort" hx-swap="none"><button class="btn danger">Стоп</button></form>
-  </div>
-  <progress id="bar" max="{{ run.total_domains }}" value="{{ run.processed_domains }}"></progress>
-  <div class="row gap small">
-    <span>обработано: <b id="proc">{{ run.processed_domains }}</b>/{{ run.total_domains }}</span>
-    <span class="verdict-clean">чистых: <b id="cnt-clean">{{ run.clean_count }}</b></span>
-    <span class="verdict-nuanced">нюансов: <b id="cnt-nuanced">{{ run.nuanced_count }}</b></span>
-    <span class="verdict-dirty">грязных: <b id="cnt-dirty">{{ run.dirty_count }}</b></span>
-    <span>ошибок: <b id="cnt-err">{{ run.error_count }}</b></span>
-  </div>
-  <div class="muted small">сейчас: <span class="mono" id="current">—</span></div>
-  <div class="muted small italic">если пауза — это троттлинг Internet Archive, это нормально</div>
-</section>
-<script>
-(function(){
-  const es = new EventSource("/api/runs/{{ run.id }}/stream");
-  es.onmessage = (ev) => {
-    const s = JSON.parse(ev.data);
-    document.getElementById('bar').value = s.processed;
-    document.getElementById('proc').textContent = s.processed;
-    document.getElementById('cnt-clean').textContent = s.clean;
-    document.getElementById('cnt-nuanced').textContent = s.nuanced;
-    document.getElementById('cnt-dirty').textContent = s.dirty;
-    document.getElementById('cnt-err').textContent = s.errors;
-    document.getElementById('current').textContent = s.current || '—';
-    if (s.status !== 'running') { es.close(); setTimeout(()=>location.reload(), 800); }
-  };
-})();
-</script>
-{% endif %}
-
-<section class="card stack">
-  <div class="row-between">
-    <h2 class="h2">Домены</h2>
-    <div class="row gap">
-      <form class="row gap small" method="get">
-        <select name="verdict">
-          <option value="">все вердикты</option>
-          <option value="clean" {% if filters.verdict == 'clean' %}selected{% endif %}>чистые</option>
-          <option value="nuanced" {% if filters.verdict == 'nuanced' %}selected{% endif %}>нюансы</option>
-          <option value="dirty" {% if filters.verdict == 'dirty' %}selected{% endif %}>грязные</option>
-        </select>
-        <label><input type="checkbox" name="risky_only" value="true" {% if filters.risky_only %}checked{% endif %}> риск</label>
-        <label><input type="checkbox" name="review_only" value="true" {% if filters.review_only %}checked{% endif %}> внимание</label>
-        <select name="sort">
-          <option value="id" {% if filters.sort=='id' %}selected{% endif %}>порядок ввода</option>
-          <option value="age" {% if filters.sort=='age' %}selected{% endif %}>возраст</option>
-          <option value="verdict" {% if filters.sort=='verdict' %}selected{% endif %}>вердикт</option>
-          <option value="flags" {% if filters.sort=='flags' %}selected{% endif %}>флаги</option>
-        </select>
-        <button class="btn">Фильтр</button>
-        <a class="btn" href="/api/runs/{{ run.id }}/export.csv?{% if filters.verdict %}verdict={{ filters.verdict }}&{% endif %}{% if filters.risky_only %}risky_only=true&{% endif %}{% if filters.review_only %}review_only=true{% endif %}">Экспорт CSV</a>
-      </form>
-    </div>
-  </div>
-
-  <table class="dense canvas">
-    <thead><tr>
-      <th></th>
-      <th>Домен</th>
-      <th>Вердикт</th>
-      <th>Возраст</th>
-      <th>Эпох</th>
-      <th>Флаги</th>
-      <th>Статус</th>
-    </tr></thead>
-    <tbody>
-    {% for d in domains %}
-      {% set vc = d.verdict or 'none' %}
-      <tr class="clickable verdict-row-{{ vc }} {% if (d.risky_flag_count or d.review_flag_count) and not d.verdict %}flagged{% endif %}"
-          onclick="location.href='/domains/{{ d.id }}'">
-        <td class="strip strip-{{ vc }}"></td>
-        <td class="mono">{{ d.domain }}</td>
-        <td>
-          {% if d.verdict %}
-          <span class="verdict-badge v-{{ d.verdict }}">
-            {% if d.verdict == 'clean' %}<i data-lucide="check"></i>чистый
-            {% elif d.verdict == 'nuanced' %}<i data-lucide="alert-triangle"></i>нюансы
-            {% else %}<i data-lucide="octagon-x"></i>грязный{% endif %}
-          </span>
-          {% else %}
-            {% if d.status == 'no_data' %}<span class="badge nodata"><i data-lucide="circle-dashed"></i> нет данных</span>
-            {% elif d.status == 'error' %}<span class="badge err"><i data-lucide="circle-x"></i> ошибка</span>
-            {% else %}<span class="muted small">—</span>{% endif %}
-          {% endif %}
-        </td>
-        <td class="num">{{ d.age_days or '—' }}{% if d.age_days %}&nbsp;дн{% endif %}</td>
-        <td class="num">{{ d.total_versions }}</td>
-        <td class="flags">
-          {% if d.risky_flag_count %}<span class="flag risky" title="рисковых эпох: {{ d.risky_flag_count }}"><i data-lucide="alert-octagon"></i>{{ d.risky_flag_count }}</span>{% endif %}
-          {% if d.review_flag_count %}<span class="flag review" title="обратить внимание: {{ d.review_flag_count }}"><i data-lucide="search"></i>{{ d.review_flag_count }}</span>{% endif %}
-          {% if d.status == 'partial' %}<span class="flag partial" title="частичная проверка — упёрлись в лимит LLM"><i data-lucide="clock-alert"></i>частично</span>{% endif %}
-        </td>
-        <td><span class="badge {{ d.status }}">{{ d.status }}</span></td>
-      </tr>
-    {% else %}
-      <tr><td colspan="7" class="muted center">по фильтру ничего не нашлось</td></tr>
-    {% endfor %}
-    </tbody>
-  </table>
-</section>
 
 {% endblock %}

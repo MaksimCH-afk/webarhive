@@ -22,6 +22,7 @@ from fastapi.responses import (
     StreamingResponse,
 )
 from sqlalchemy import desc, select
+from sqlalchemy.orm import selectinload
 
 from webarhive.config import get_settings, save_overrides
 from webarhive.db.engine import get_session
@@ -37,14 +38,75 @@ api_router = APIRouter(prefix="/api")
 
 # ----- HTML -----
 
+class CanvasFilters:
+    """Lightweight helper that the canvas template uses to build
+    chip-link query strings. Exposes qs(), qs_with(k,v), qs_without(k),
+    qs_toggle(k) plus attribute access to the current values."""
+
+    def __init__(self, *, q: str = "", verdict: str | None = None,
+                 risky_only: bool = False, review_only: bool = False,
+                 sort: str = "id"):
+        self.q = q
+        self.verdict = verdict
+        self.risky_only = risky_only
+        self.review_only = review_only
+        self.sort = sort
+
+    def _as_dict(self) -> dict[str, str]:
+        d: dict[str, str] = {}
+        if self.q: d["q"] = self.q
+        if self.verdict: d["verdict"] = self.verdict
+        if self.risky_only: d["risky_only"] = "true"
+        if self.review_only: d["review_only"] = "true"
+        if self.sort and self.sort != "id": d["sort"] = self.sort
+        return d
+
+    @staticmethod
+    def _encode(d: dict[str, str]) -> str:
+        from urllib.parse import urlencode
+        return urlencode(d)
+
+    def qs(self) -> str:
+        return self._encode(self._as_dict())
+
+    def qs_with(self, key: str, value: str) -> str:
+        d = self._as_dict()
+        d[key] = value
+        return self._encode(d)
+
+    def qs_without(self, key: str) -> str:
+        d = self._as_dict()
+        d.pop(key, None)
+        return self._encode(d)
+
+    def qs_toggle(self, key: str) -> str:
+        d = self._as_dict()
+        if key in d:
+            d.pop(key)
+        else:
+            d[key] = "true"
+        return self._encode(d)
+
+
 @html_router.get("/", response_class=HTMLResponse)
 async def main_page(request: Request):
     async with get_session() as s:
         runs = (await s.execute(select(Run).order_by(desc(Run.started_at)).limit(100))).scalars().all()
+        running_run = next((r for r in runs if r.status == RunStatus.RUNNING.value), None)
+        # current domain for the live header
+        current_domain = None
+        if running_run is not None:
+            current_domain = (await s.execute(
+                select(Domain.domain).where(
+                    Domain.run_id == running_run.id,
+                    Domain.status == DomainStatus.RUNNING.value,
+                ).limit(1)
+            )).scalar_one_or_none()
     return get_templates(request).TemplateResponse(
         request,
         "main.html",
-        {"runs": runs, "settings": get_settings()},
+        {"runs": runs, "settings": get_settings(),
+         "running_run": running_run, "current_domain": current_domain},
     )
 
 
@@ -52,6 +114,7 @@ async def main_page(request: Request):
 async def run_canvas(
     request: Request,
     run_id: int,
+    q: str = Query(""),
     verdict: str | None = Query(None),
     risky_only: bool = Query(False),
     review_only: bool = Query(False),
@@ -61,7 +124,28 @@ async def run_canvas(
         run = await s.get(Run, run_id)
         if run is None:
             raise HTTPException(404, "run not found")
-        stmt = select(Domain).where(Domain.run_id == run_id)
+
+        # counts for filter chips (unfiltered, just the totals)
+        all_domains = (await s.execute(
+            select(Domain).where(Domain.run_id == run_id)
+        )).scalars().all()
+        counts = {
+            "all": len(all_domains),
+            "clean":   sum(1 for d in all_domains if d.verdict == "clean"),
+            "nuanced": sum(1 for d in all_domains if d.verdict == "nuanced"),
+            "dirty":   sum(1 for d in all_domains if d.verdict == "dirty"),
+        }
+
+        # Pull epochs + redirects in one go so the flag_stack macro
+        # can iterate them without triggering lazy loads after the
+        # session is closed.
+        stmt = (
+            select(Domain)
+            .where(Domain.run_id == run_id)
+            .options(selectinload(Domain.epochs), selectinload(Domain.redirects))
+        )
+        if q:
+            stmt = stmt.where(Domain.domain.contains(q.lower()))
         if verdict:
             stmt = stmt.where(Domain.verdict == verdict)
         if risky_only:
@@ -76,17 +160,17 @@ async def run_canvas(
         }
         stmt = stmt.order_by(sort_map.get(sort, Domain.id.asc()))
         domains = (await s.execute(stmt)).scalars().all()
+
+    filters = CanvasFilters(
+        q=q, verdict=verdict, risky_only=risky_only,
+        review_only=review_only, sort=sort,
+    )
+    crumbs = [{"label": f"Прогон #{run.id}", "sub": run.started_at.strftime('%Y-%m-%d %H:%M'), "mono": True}]
     return get_templates(request).TemplateResponse(
         request,
         "canvas.html",
-        {
-            "run": run,
-            "domains": domains,
-            "filters": {
-                "verdict": verdict, "risky_only": risky_only,
-                "review_only": review_only, "sort": sort,
-            },
-        },
+        {"run": run, "domains": domains, "counts": counts,
+         "filters": filters, "crumbs": crumbs},
     )
 
 
@@ -105,14 +189,17 @@ async def domain_card(request: Request, domain_id: int):
         llm_calls = (await s.execute(select(LlmCall).where(LlmCall.domain_id == domain_id)
                                      .order_by(LlmCall.created_at))).scalars().all()
         run = await s.get(Run, d.run_id)
+    crumbs = [
+        {"label": f"Прогон #{run.id}",
+         "sub": run.started_at.strftime('%Y-%m-%d %H:%M'),
+         "href": f"/runs/{run.id}", "mono": True},
+        {"label": d.domain, "mono": True},
+    ]
     return get_templates(request).TemplateResponse(
         request,
         "card.html",
-        {
-            "domain": d, "epochs": epochs,
-            "redirects": redirects, "drops": drops, "llm_calls": llm_calls,
-            "run": run,
-        },
+        {"domain": d, "epochs": epochs, "redirects": redirects,
+         "drops": drops, "llm_calls": llm_calls, "run": run, "crumbs": crumbs},
     )
 
 

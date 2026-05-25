@@ -3,6 +3,10 @@
 Editable registry — promt to the LLM is generated from this list.
 Risky categories take priority over neutral ones (if a page shows both,
 mark as risky).
+
+`icon` names match the Lucide-style inline SVG library declared in
+web/templates/_icons.html. Add a new key there if you add a new icon
+to a category.
 """
 
 from dataclasses import dataclass
@@ -19,43 +23,44 @@ class CategoryGroup(str, Enum):
 class Category:
     key: str
     group: CategoryGroup
-    label_ru: str
+    label_ru: str         # long label for cards / details
+    short_ru: str         # compact label for the epoch bar
     description: str
-    icon: str  # lucide icon name
+    icon: str             # lucide icon key (see _icons.html)
 
 
 CATEGORIES: tuple[Category, ...] = (
     # Neutral / content
     Category("информационный_контентный", CategoryGroup.NEUTRAL, "Информационный/контентный",
-             "Блоги, СМИ, новости, справочники, вики", "file-text"),
+             "Контент", "Блоги, СМИ, новости, справочники, вики", "FileText"),
     Category("коммерция_магазин", CategoryGroup.NEUTRAL, "Магазин",
-             "Интернет-магазины, товары", "shopping-cart"),
+             "Магазин", "Интернет-магазины, товары", "ShoppingCart"),
     Category("услуги_бизнес", CategoryGroup.NEUTRAL, "Услуги/бизнес",
-             "Компания продаёт услуги", "briefcase"),
+             "Услуги", "Компания продаёт услуги", "Briefcase"),
     Category("корпоративный_брендовый", CategoryGroup.NEUTRAL, "Корпоративный/брендовый",
-             "Сайт-визитка компании/бренда без явной продажи", "building-2"),
+             "Корп.", "Сайт-визитка компании/бренда без явной продажи", "Building2"),
     Category("технический_сервис", CategoryGroup.NEUTRAL, "Технический сервис",
-             "SaaS, онлайн-сервис, приложение, API", "code-2"),
+             "Сервис", "SaaS, онлайн-сервис, приложение, API", "Cog"),
     # Risky (priority over neutral)
     Category("гемблинг_казино", CategoryGroup.RISKY, "Гемблинг/казино",
-             "Слоты, ставки, casino, bet, покер", "dice-5"),
+             "Казино", "Слоты, ставки, casino, bet, покер", "Dice5"),
     Category("адалт", CategoryGroup.RISKY, "Адалт",
-             "18+, порно-контент", "eye-off"),
+             "Адалт", "18+, порно-контент", "Eye"),
     Category("фарма", CategoryGroup.RISKY, "Фарма",
-             "Таблетки, дженерики, аптека без лицензии", "pill"),
+             "Фарма", "Таблетки, дженерики, аптека без лицензии", "Pill"),
     Category("займы_фин_спам", CategoryGroup.RISKY, "Займы/фин-спам",
-             "Микрозаймы, бинарные опционы, форекс-разводы, крипто-удвоители", "coins"),
+             "Займы", "Микрозаймы, бинарные опционы, форекс-разводы, крипто-удвоители", "Percent"),
     Category("варез_пиратство", CategoryGroup.RISKY, "Варез/пиратство",
-             "Кряки, торренты, keygen, серийники", "download-cloud"),
+             "Варез", "Кряки, торренты, keygen, серийники", "Download"),
     Category("дорвей_спам_фарм", CategoryGroup.RISKY, "Дорвей/спам-ферма",
-             "SEO-простыни, мусорный набор ключевиков, накрутка ссылок", "spam"),
+             "Дорвей", "SEO-простыни, мусорный набор ключевиков, накрутка ссылок", "Spam"),
     # Service / state (not a topic)
     Category("парковка_заглушка", CategoryGroup.SERVICE, "Парковка/заглушка",
-             "Домен припаркован/на продаже (Sedo, GoDaddy parking, buy this domain)", "parking-circle"),
+             "Парк.", "Домен припаркован/на продаже (Sedo, GoDaddy parking, buy this domain)", "ParkingSquare"),
     Category("пусто_нет_контента", CategoryGroup.SERVICE, "Пусто/нет контента",
-             "Страница есть, текста нет (битый снапшот, голый JS-каркас)", "file-x"),
+             "Пусто", "Страница есть, текста нет (битый снапшот, голый JS-каркас)", "FileX2"),
     Category("не_определено", CategoryGroup.SERVICE, "Не определено",
-             "Контент есть, но не классифицируется", "help-circle"),
+             "?", "Контент есть, но не классифицируется", "HelpCircle"),
 )
 
 CATEGORY_BY_KEY: dict[str, Category] = {c.key: c for c in CATEGORIES}

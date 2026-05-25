@@ -1,0 +1,130 @@
+{#- Общие визуальные примитивы. Импорт:
+      {% from "_components.html" import verdict_badge, status_pill,
+        verdict_strip, flag_stack, epoch_bar, category_chip %}
+-#}
+{% from "_icons.html" import icon %}
+
+{#- verdict_badge: clean/nuanced/dirty или нет / pending / ошибка / no_data -#}
+{%- macro verdict_badge(verdict, status=None) -%}
+  {%- if verdict == "clean" -%}
+    <span class="badge badge--clean">{{ icon("Check", 12) }}чистый</span>
+  {%- elif verdict == "nuanced" -%}
+    <span class="badge badge--nuance">{{ icon("AlertTriangle", 12) }}есть нюансы</span>
+  {%- elif verdict == "dirty" -%}
+    <span class="badge badge--dirty">{{ icon("Octagon", 12) }}грязный</span>
+  {%- elif status == "no_data" -%}
+    <span class="badge badge--error">{{ icon("CircleDashed", 12) }}нет данных</span>
+  {%- elif status == "error" -%}
+    <span class="badge badge--error">{{ icon("CircleDashed", 12) }}ошибка</span>
+  {%- elif status == "pending" -%}
+    <span class="badge badge--neutral">{{ icon("Hourglass", 11) }}pending</span>
+  {%- elif status == "running" -%}
+    <span class="badge badge--running">running</span>
+  {%- else -%}
+    <span class="badge badge--neutral">{{ icon("CircleDashed", 12) }}не выставлен</span>
+  {%- endif -%}
+{%- endmacro -%}
+
+{#- status_pill: для run.status или domain.status -#}
+{%- macro status_pill(status) -%}
+  {%- if status == "running" -%}<span class="badge badge--running">running</span>
+  {%- elif status == "pending" -%}<span class="badge badge--neutral">{{ icon("Hourglass", 11) }}pending</span>
+  {%- elif status == "done" -%}<span class="badge badge--neutral">{{ icon("Check", 11) }}done</span>
+  {%- elif status == "finished" -%}<span class="badge badge--clean">{{ icon("Check", 11) }}finished</span>
+  {%- elif status == "partial" -%}<span class="badge badge--nuance">{{ icon("AlertTriangle", 11) }}partial</span>
+  {%- elif status == "no_data" -%}<span class="badge badge--error">no data</span>
+  {%- elif status == "aborted" -%}<span class="badge badge--dirty">aborted</span>
+  {%- elif status == "error" -%}<span class="badge badge--error">error</span>
+  {%- else -%}<span class="badge badge--neutral">{{ status }}</span>
+  {%- endif -%}
+{%- endmacro -%}
+
+{#- verdict_strip: цветная вертикальная полоса слева от имени домена -#}
+{%- macro verdict_strip(verdict, status=None) -%}
+  {%- set cls = "domain-row__strip" -%}
+  {%- if verdict == "clean" -%}{% set cls = cls + " domain-row__strip--clean" %}
+  {%- elif verdict == "nuanced" -%}{% set cls = cls + " domain-row__strip--nuance" %}
+  {%- elif verdict == "dirty" -%}{% set cls = cls + " domain-row__strip--dirty" %}
+  {%- elif status in ("error", "no_data") -%}{% set cls = cls + " domain-row__strip--error" %}
+  {%- endif -%}
+  <span class="{{ cls }}" aria-hidden="true"></span>
+{%- endmacro -%}
+
+{#- category chip с иконкой -#}
+{%- macro category_chip(key, categories) -%}
+  {%- set c = categories.get(key) -%}
+  {%- if not c -%}
+    <span class="badge badge--neutral">—</span>
+  {%- elif c.group.value == "risky" -%}
+    <span class="badge badge--dirty">{{ icon(c.icon, 11) }}{{ c.label_ru }}</span>
+  {%- else -%}
+    <span class="badge badge--neutral">{{ icon(c.icon, 11) }}{{ c.label_ru }}</span>
+  {%- endif -%}
+{%- endmacro -%}
+
+{#- flag_stack: иконки рисковых категорий + «обратить внимание» + «partial» -#}
+{%- macro flag_stack(domain, epochs, categories, redirects=None) -%}
+  {%- set risky_keys = [] -%}
+  {%- for e in epochs -%}
+    {%- set c = categories.get(e.category) -%}
+    {%- if c and c.group.value == "risky" and c.key not in risky_keys -%}
+      {%- set _ = risky_keys.append(c.key) -%}
+    {%- endif -%}
+  {%- endfor -%}
+  {%- set review_count = (redirects or []) | selectattr("classification", "equalto", "review") | list | length -%}
+  {%- if not risky_keys and not review_count and domain.status != "partial" -%}
+    <span class="no-flags">—</span>
+  {%- else -%}
+    <span class="flag-stack">
+      {%- for k in risky_keys -%}
+        {%- set c = categories[k] -%}
+        <span class="flag flag--risk tooltip-host" title="{{ c.label_ru }}">{{ icon(c.icon, 12) }}<span class="tooltip">{{ c.label_ru }}</span></span>
+      {%- endfor -%}
+      {%- if review_count -%}
+        <span class="flag flag--attention tooltip-host" title="обратить внимание · {{ review_count }}">{{ icon("AlertTriangle", 12) }}<span class="tooltip">обратить внимание · {{ review_count }}</span></span>
+      {%- endif -%}
+      {%- if domain.status == "partial" -%}
+        <span class="flag flag--util tooltip-host" title="частичная проверка — упёрлись в лимит LLM">{{ icon("Hourglass", 12) }}<span class="tooltip">частичная проверка</span></span>
+      {%- endif -%}
+    </span>
+  {%- endif -%}
+{%- endmacro -%}
+
+{#- epoch_bar: горизонтальная лента эпох + (опционально) gap-блоки между ними -#}
+{%- macro epoch_bar(epochs, categories) -%}
+  {%- if not epochs -%}
+    <div class="dropzone" style="padding:18px">эпох нет</div>
+  {%- else -%}
+    {%- set min_start = epochs[0].period_from.timestamp() -%}
+    {%- set max_end = epochs[-1].period_to.timestamp() -%}
+    {%- set span = (max_end - min_start) or 1 -%}
+    <div class="epoch-bar" role="img" aria-label="Лента эпох тематики">
+      {%- for e in epochs -%}
+        {%- set c = categories.get(e.category) -%}
+        {%- set kind = (c.group.value if c else "unknown") -%}
+        {%- set ep_w = ((e.period_to.timestamp() - e.period_from.timestamp()) / span) or 0.04 -%}
+        <div class="epoch {% if kind == 'risky' %}epoch--risk{% elif kind == 'service' %}epoch--util{% elif kind == 'neutral' %}epoch--neutral{% else %}epoch--unknown{% endif %}"
+             style="flex: {{ ep_w }}"
+             title="{{ e.period_from.strftime('%Y-%m-%d') }} — {{ e.period_to.strftime('%Y-%m-%d') }}
+{{ c.label_ru if c else 'Не определено' }}{% if e.reason %}
+{{ e.reason }}{% endif %}">
+          <div class="epoch__cat">
+            {% if c %}{{ icon(c.icon, 11) }}{% else %}{{ icon("HelpCircle", 11) }}{% endif %}
+            <span>{{ c.short_ru if c else "—" }}</span>
+          </div>
+          <div class="epoch__period">{{ e.period_from.strftime('%Y-%m') }} → {{ e.period_to.strftime('%Y-%m') }}</div>
+        </div>
+      {%- endfor -%}
+    </div>
+  {%- endif -%}
+{%- endmacro -%}
+
+{#- mini legend под лентой -#}
+{%- macro epoch_legend() -%}
+  <div class="legend">
+    <span class="legend__item"><span class="legend__sw legend__sw--neutral"></span>нейтральная</span>
+    <span class="legend__item"><span class="legend__sw legend__sw--risk"></span>рисковая</span>
+    <span class="legend__item"><span class="legend__sw legend__sw--util"></span>служебная</span>
+    <span class="legend__item"><span class="legend__sw legend__sw--gap"></span>пауза/дроп</span>
+  </div>
+{%- endmacro -%}
