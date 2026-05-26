@@ -31,6 +31,7 @@ _EDITABLE_FIELDS = {
     "whois_cache_ttl_days", "whois_monthly_floor",
     # Best snapshot
     "enable_best_snapshot", "best_snapshot_top_n",
+    "best_snapshot_max_resources", "best_snapshot_per_epoch_timeout_sec",
     "enable_best_snapshot_content_llm",
 }
 
@@ -110,7 +111,16 @@ class Settings(BaseSettings):
     # Best snapshot (spec extension) — лучший слепок на эпоху по полноте
     # ресурсов. По умолчанию выключен — фичу включает оператор.
     enable_best_snapshot: bool = Field(default=False, alias="ENABLE_BEST_SNAPSHOT")
-    best_snapshot_top_n: int = Field(default=5, alias="BEST_SNAPSHOT_TOP_N")
+    # Снижено с 5 до 3 — каждое значение это +N тяжёлых проверок (HTML +
+    # Availability API на ресурсы) на КАЖДУЮ эпоху. 3 кандидата на эпоху
+    # с равномерным сэмплированием уже дают репрезентативную оценку.
+    best_snapshot_top_n: int = Field(default=3, alias="BEST_SNAPSHOT_TOP_N")
+    # Максимум ресурсов, проверяемых на одном кандидате через Availability
+    # API. Если HTML тащит 80 ассетов — берём представительный сэмпл.
+    best_snapshot_max_resources: int = Field(default=8, alias="BEST_SNAPSHOT_MAX_RESOURCES")
+    # Жёсткий потолок времени на одну эпоху best-snapshot. При превышении
+    # эпоха пропускается — не блокирует остальные.
+    best_snapshot_per_epoch_timeout_sec: int = Field(default=90, alias="BEST_SNAPSHOT_PER_EPOCH_TIMEOUT_SEC")
     enable_best_snapshot_content_llm: bool = Field(default=False, alias="ENABLE_BEST_SNAPSHOT_CONTENT_LLM")
 
     # App / deployment
@@ -159,12 +169,6 @@ class Settings(BaseSettings):
                 "ia_max_retries": self.ia_max_retries,
                 "per_domain_timeout_sec": self.per_domain_timeout_sec,
             },
-            "throttle": {
-                "concurrency": self.concurrency,
-                "ia_rate_limit": self.ia_rate_limit,
-                "ia_backoff": self.ia_backoff,
-                "ia_max_retries": self.ia_max_retries,
-            },
             "input": {
                 "check_subdomains": self.check_subdomains,
             },
@@ -177,6 +181,8 @@ class Settings(BaseSettings):
             "best_snapshot": {
                 "enabled": self.enable_best_snapshot,
                 "top_n": self.best_snapshot_top_n,
+                "max_resources_per_candidate": self.best_snapshot_max_resources,
+                "per_epoch_timeout_sec": self.best_snapshot_per_epoch_timeout_sec,
                 "content_llm": self.enable_best_snapshot_content_llm,
             },
         }

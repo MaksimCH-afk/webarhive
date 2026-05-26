@@ -203,8 +203,16 @@
       </label>
       <div class="form-grid">
         <div class="field">
-          <label class="field__lbl">best_snapshot_top_n{{ help_dot("Сколько кандидатов главной страницы внутри эпохи проверять на полноту ресурсов. Каждая проверка = N CDX-запросов на ресурсы, поэтому ограничение. Дефолт 5 — берёт первый, последний и 3 равномерно.") }}</label>
+          <label class="field__lbl">best_snapshot_top_n{{ help_dot("Сколько кандидатов главной страницы внутри эпохи проверять на полноту ресурсов. Каждый кандидат = HTML-фетч + Availability API на ресурсы. Дефолт 3 — берёт первый, средний и последний.") }}</label>
           <input class="input" type="number" min="1" max="50" name="best_snapshot_top_n" value="{{ fields.best_snapshot_top_n }}">
+        </div>
+        <div class="field">
+          <label class="field__lbl">best_snapshot_max_resources{{ help_dot("Сколько ресурсов (CSS/JS/img) проверять у одного кандидата. Если страница тащит 80 ассетов — берём представительный сэмпл. Дефолт 8.") }}</label>
+          <input class="input" type="number" min="1" max="50" name="best_snapshot_max_resources" value="{{ fields.best_snapshot_max_resources }}">
+        </div>
+        <div class="field">
+          <label class="field__lbl">best_snapshot_per_epoch_timeout_sec{{ help_dot("Жёсткий потолок на одну эпоху best-snapshot. При превышении эпоха пропускается, остальные продолжают. Дефолт 90 секунд.") }}</label>
+          <input class="input" type="number" min="10" max="600" name="best_snapshot_per_epoch_timeout_sec" value="{{ fields.best_snapshot_per_epoch_timeout_sec }}">
         </div>
         <div class="field" style="justify-content:end">
           <label class="toggle {% if fields.enable_best_snapshot_content_llm %}toggle--on{% endif %}">

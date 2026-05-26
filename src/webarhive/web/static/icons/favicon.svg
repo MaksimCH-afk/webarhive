@@ -1,13 +1,16 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">
-  <!-- Reference: blue square, white clock outline with hands, white circle with blue checkmark bottom-right -->
-  <rect width="32" height="32" rx="6" fill="#2358e0"/>
-  <!-- clock ring -->
-  <circle cx="14" cy="16" r="8" fill="none" stroke="#ffffff" stroke-opacity="0.55" stroke-width="2.4"/>
-  <!-- clock hands -->
-  <path d="M14 11 L14 16 L17.5 17.7" stroke="#ffffff" stroke-width="2.6"
-        stroke-linecap="round" stroke-linejoin="round" fill="none"/>
-  <!-- check bubble bottom-right -->
-  <circle cx="22.5" cy="22.5" r="5.5" fill="#ffffff"/>
-  <path d="M20 22.7 L22 24.7 L25.2 21.2" stroke="#2358e0" stroke-width="1.8"
-        stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#3b6fea"></stop>
+      <stop offset="100%" stop-color="#1f4ed1"></stop>
+    </linearGradient>
+  </defs>
+  <rect width="64" height="64" rx="14" fill="url(#bg)"></rect>
+  
+  <circle cx="32" cy="32" r="18" fill="none" stroke="#ffffff" stroke-width="3.2" stroke-opacity="0.35"></circle>
+  
+  <path d="M32 19 V32 L41 36" fill="none" stroke="#ffffff" stroke-width="3.6" stroke-linecap="round" stroke-linejoin="round"></path>
+  
+  <circle cx="46" cy="46" r="11" fill="#ffffff"></circle>
+  <path d="M41 46.5 L44.5 50 L51 43" fill="none" stroke="#1f4ed1" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"></path>
 </svg>

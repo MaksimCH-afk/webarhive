@@ -5,9 +5,13 @@ domain's HOME PAGE. "Most complete" = resource coverage (CSS/JS/img),
 HTML integrity (length not absurdly small, body present), and time
 consistency (resources archived near the page timestamp).
 
-This is a CDX-heavy operation — we hit CDX for every referenced
-resource per candidate. To stay within IA throttle limits, we cap the
-number of candidates per epoch (BEST_SNAPSHOT_TOP_N).
+Resource availability is checked through the Internet Archive
+Availability API — a fast point-query endpoint
+(`https://archive.org/wayback/available?url=X&timestamp=Y`) that
+answers "is this URL archived near this timestamp" in one call.
+Earlier we used CDX with matchType=host per resource, which dumped
+millions of paginated rows for CDN hosts and burned 15+ minutes per
+domain. Availability API returns a tiny JSON immediately.
 
 No LLM by default. Optional content_llm step (off by default) only
 sanity-checks "is this a real epoch page vs coming-soon / 404".
@@ -15,16 +19,19 @@ sanity-checks "is this a real epoch page vs coming-soon / 404".
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import re
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Sequence
+from typing import Awaitable, Callable, Sequence
 from urllib.parse import urljoin, urlsplit
 
+import httpx
 from selectolax.parser import HTMLParser
 
 from webarhive.cdx.client import CdxClient, CdxRow
+from webarhive.cdx.throttle import IAThrottle
 from webarhive.fetcher.snapshot import SnapshotFetcher, snapshot_url
 
 logger = logging.getLogger(__name__)
@@ -158,29 +165,38 @@ def _ts_to_dt(ts: str) -> datetime | None:
     return None
 
 
+AVAILABILITY_URL = "https://archive.org/wayback/available"
+
+
 async def _check_resource(
-    cdx: CdxClient, target_url: str, near_ts: str, source_domain: str,
+    http: httpx.AsyncClient,
+    throttle: IAThrottle,
+    target_url: str,
+    near_ts: str,
 ) -> bool:
-    """True if there's a CDX row with status 200 for this resource
-    within a reasonable timestamp window. We accept any 200 because IA
-    keeps multiple captures; if at least one is OK we count it."""
-    try:
-        parts = urlsplit(target_url)
-        host = (parts.hostname or "").lower()
-        if not host:
-            return False
-        rows = await cdx.fetch_all(host, match_type="host")
-    except Exception as exc:
-        logger.debug("resource CDX failed for %s: %s", target_url, exc)
+    """True if IA's Availability API reports an archived snapshot of
+    `target_url` near `near_ts`. One tiny JSON request per resource —
+    way cheaper than dumping the whole CDX index for the host."""
+    if not target_url:
         return False
-    # Find any 200 row whose 'original' matches our URL (ignoring scheme).
-    path_q = target_url.split("://", 1)[-1].split("#", 1)[0]
-    for r in rows:
-        if r.statuscode != "200":
-            continue
-        if path_q.lower() in r.original.lower():
-            return True
-    return False
+    try:
+        await throttle.acquire()
+        resp = await http.get(
+            AVAILABILITY_URL,
+            params={"url": target_url, "timestamp": near_ts},
+            timeout=15.0,
+        )
+        if resp.status_code != 200:
+            return False
+        data = resp.json()
+    except Exception as exc:
+        logger.debug("availability check failed for %s: %s", target_url, exc)
+        return False
+    snap = (data.get("archived_snapshots") or {}).get("closest") or {}
+    if not snap.get("available"):
+        return False
+    status = str(snap.get("status") or "")
+    return status.startswith("2") or status.startswith("3")
 
 
 async def best_snapshot_for_epoch(
@@ -190,7 +206,11 @@ async def best_snapshot_for_epoch(
     source_domain: str,
     fetcher: SnapshotFetcher,
     cdx: CdxClient,
-    top_n: int = 5,
+    http: httpx.AsyncClient,
+    throttle: IAThrottle,
+    top_n: int = 3,
+    max_resources_per_candidate: int = 8,
+    progress: Callable[[str], Awaitable[None]] | None = None,
 ) -> BestSnapshot | None:
     """Pick the best home-page snapshot from the epoch's candidate list.
 
@@ -203,7 +223,18 @@ async def best_snapshot_for_epoch(
     chosen = _select_candidates(candidates, top_n)
     best: BestSnapshot | None = None
 
-    for row in chosen:
+    async def _emit(msg: str) -> None:
+        if progress is not None:
+            try:
+                await progress(msg)
+            except Exception:
+                pass
+
+    for cand_idx, row in enumerate(chosen, start=1):
+        await _emit(
+            f"эпоха #{epoch_idx+1}: кандидат {cand_idx}/{len(chosen)} "
+            f"({row.timestamp[:8]}) — забираю HTML"
+        )
         try:
             content = await fetcher.fetch(row.timestamp, row.original)
         except Exception as exc:
@@ -231,13 +262,16 @@ async def best_snapshot_for_epoch(
                 best = candidate
             continue
 
-        # Check each resource — capped at a safety limit per candidate
-        # to keep IA throttle happy. If more — sample evenly.
-        MAX_RES = 12
+        # Sample resources to keep Availability API calls bounded.
+        MAX_RES = max_resources_per_candidate
         res_sample = (
             resources if len(resources) <= MAX_RES
             else [resources[i] for i in range(0, len(resources),
                                               max(1, len(resources) // MAX_RES))][:MAX_RES]
+        )
+        await _emit(
+            f"эпоха #{epoch_idx+1}: кандидат {cand_idx}/{len(chosen)} — "
+            f"проверяю {len(res_sample)} ресурсов через Availability API"
         )
         by_type: dict[str, list[int]] = {}  # type -> [total, archived]
         missing: list[str] = []
@@ -246,7 +280,7 @@ async def best_snapshot_for_epoch(
             t = _classify_resource(ru)
             by_type.setdefault(t, [0, 0])
             by_type[t][0] += 1
-            ok = await _check_resource(cdx, ru, row.timestamp, source_domain)
+            ok = await _check_resource(http, throttle, ru, row.timestamp)
             if ok:
                 by_type[t][1] += 1
                 archived_count += 1

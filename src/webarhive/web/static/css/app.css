@@ -560,6 +560,18 @@ button { font-family: inherit; }
 .stat--dirty .stat__val { color: var(--dirty-fg); }
 .stat--neutral .stat__val { color: var(--text-2); }
 
+/* ===== Running run highlight ===== */
+.card--running {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px var(--accent-ring), var(--shadow-card);
+  background:
+    linear-gradient(180deg, var(--accent-soft) 0%, var(--surface) 70%);
+}
+.card--running .card__head--running {
+  background: linear-gradient(180deg, var(--accent-soft) 0%, var(--surface) 100%);
+  border-bottom-color: var(--accent-ring);
+}
+
 /* ===== Tabs / Toolbar ===== */
 .toolbar {
   display: flex;
@@ -730,6 +742,106 @@ textarea.input {
 }
 .set-tab--active { background: var(--surface); color: var(--text); font-weight: 500; box-shadow: var(--shadow-card); }
 
+/* ===== Settings — full form layout ===== */
+.modal--settings {
+  width: min(960px, calc(100vw - 64px));
+  max-height: calc(100vh - 80px);
+  display: flex;
+  flex-direction: column;
+}
+.modal__body--scroll {
+  padding: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  flex: 1;
+}
+.set-section {
+  padding: 22px 24px 20px;
+  border-bottom: 1px solid var(--divider);
+}
+.set-section:last-child { border-bottom: 0; }
+.set-section-head {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  margin-bottom: 14px;
+}
+
+.field__lbl--mono {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  text-transform: none;
+  letter-spacing: 0.02em;
+  color: var(--text-2);
+  font-weight: 500;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.input--readonly {
+  background: var(--surface-2);
+  color: var(--text-2);
+  cursor: default;
+}
+.help-dot {
+  display: inline-grid;
+  place-items: center;
+  width: 14px; height: 14px;
+  border-radius: 50%;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  color: var(--text-3);
+  font-size: 9px;
+  font-weight: 700;
+  font-family: var(--font-ui);
+  cursor: help;
+  position: relative;
+}
+.help-dot .tooltip {
+  position: absolute;
+  bottom: 100%;
+  left: 50%;
+  transform: translate(-50%, -6px);
+  background: #1a2235;
+  color: #fff;
+  padding: 6px 10px;
+  border-radius: 6px;
+  font-size: 11.5px;
+  white-space: normal;
+  max-width: 280px;
+  width: max-content;
+  line-height: 1.4;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 120ms;
+  z-index: 30;
+  font-weight: 400;
+  letter-spacing: normal;
+  text-transform: none;
+}
+.help-dot:hover .tooltip { opacity: 1; }
+
+.toggle-row {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  cursor: pointer;
+  user-select: none;
+}
+.toggle-row__lbl {
+  font-size: 13px;
+  color: var(--text);
+}
+
+/* ===== Run-level aggregated log ===== */
+.agg-log-head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 13px 18px;
+}
+.agg-log-head .collapse-head__chev { color: var(--text-3); }
+
 /* ===== Log viewer ===== */
 .log {
   font-family: var(--font-mono);
@@ -826,36 +938,6 @@ textarea.input {
 }
 .tooltip-host:hover .tooltip { opacity: 1; }
 
-/* широкая подсказка для help-точки в форме настроек: с переносами */
-.tooltip--wide {
-  white-space: normal;
-  width: 240px;
-  text-align: left;
-  font-size: 12px;
-  line-height: 1.45;
-  padding: 8px 10px;
-}
-
-/* кликабельная (точнее, hover-able) точка-знак-вопрос у поля настройки */
-.help-dot {
-  display: inline-grid;
-  place-items: center;
-  width: 16px; height: 16px;
-  border-radius: 999px;
-  border: 1px solid var(--border-strong);
-  color: var(--text-3);
-  font-size: 11px;
-  font-weight: 600;
-  cursor: help;
-  background: transparent;
-  flex-shrink: 0;
-  margin-left: 6px;
-  vertical-align: -3px;
-  padding: 0;
-}
-.help-dot:hover { color: var(--accent); border-color: var(--accent); background: var(--accent-soft); }
-.field__lbl-row { display: inline-flex; align-items: center; gap: 0; }
-
 /* small dots row separator inside flag cells */
 .no-flags { color: var(--text-3); font-size: 12px; }
 
@@ -895,3 +977,15 @@ textarea.input {
   border: 1px solid #c9d6f6;
 }
 .report-bar b { color: var(--accent-2); }
+
+/* широкая подсказка для help-точки в форме настроек: с переносами */
+.tooltip--wide {
+  white-space: normal;
+  width: 240px;
+  text-align: left;
+  font-size: 12px;
+  line-height: 1.45;
+  padding: 8px 10px;
+}
+
+.field__lbl-row { display: inline-flex; align-items: center; gap: 0; }

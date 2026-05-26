@@ -72,6 +72,8 @@ async def process_domain(
     fetcher: SnapshotFetcher,
     llm: OpenRouterClient | None,
     whois_client=None,
+    http: httpx.AsyncClient | None = None,
+    throttle: IAThrottle | None = None,
 ) -> None:
     """End-to-end pipeline for a single domain. Writes results to DB
     incrementally and updates the run counters at the end."""
@@ -347,19 +349,40 @@ async def process_domain(
                 filter_home_page_rows,
             )
             tracer.step("ЛУЧШИЙ_СЛЕПОК", f"эпох: {len(topic_result.epochs)}")
-            top_n = int(bs_cfg.get("top_n", 5))
+            top_n = int(bs_cfg.get("top_n", 3))
+            max_res = int(bs_cfg.get("max_resources_per_candidate", 8))
+            per_epoch_timeout = float(bs_cfg.get("per_epoch_timeout_sec", 90))
             home_rows = filter_home_page_rows(cdx_rows, domain_row.domain)
+
+            async def _bs_progress(msg: str) -> None:
+                tracer.info(msg)
+
             for i, ep in enumerate(topic_result.epochs):
                 cands = epoch_candidates(home_rows, ep.period_from, ep.period_to)
                 if not cands:
                     tracer.info(f"эпоха #{i+1}: лучший слепок недоступен (нет 200-главной)")
                     continue
+                if http is None or throttle is None:
+                    tracer.warn(f"эпоха #{i+1}: http/throttle не пробросаны — пропускаю best-snap")
+                    continue
                 try:
-                    best = await best_snapshot_for_epoch(
-                        epoch_idx=i, candidates=cands,
-                        source_domain=domain_row.domain,
-                        fetcher=fetcher, cdx=cdx, top_n=top_n,
+                    best = await asyncio.wait_for(
+                        best_snapshot_for_epoch(
+                            epoch_idx=i, candidates=cands,
+                            source_domain=domain_row.domain,
+                            fetcher=fetcher, cdx=cdx,
+                            http=http, throttle=throttle,
+                            top_n=top_n,
+                            max_resources_per_candidate=max_res,
+                            progress=_bs_progress,
+                        ),
+                        timeout=per_epoch_timeout,
                     )
+                except asyncio.TimeoutError:
+                    tracer.warn(
+                        f"эпоха #{i+1}: best-snap превысил {per_epoch_timeout:.0f}s — пропускаю"
+                    )
+                    continue
                 except Exception as exc:
                     tracer.warn(f"эпоха #{i+1}: best-snap упал — {exc}")
                     continue
@@ -600,6 +623,8 @@ async def run_pipeline(
                                 fetcher=fetcher,
                                 llm=llm,
                                 whois_client=whois_client,
+                                http=http,
+                                throttle=throttle,
                             ),
                             timeout=per_domain_timeout,
                         )

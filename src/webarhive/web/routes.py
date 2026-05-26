@@ -266,7 +266,8 @@ _INT_FIELDS = {
     "concurrency", "ia_max_retries", "light_fetch_cap",
     "redirect_cap", "redirect_llm_review_cap", "per_domain_timeout_sec",
     "whois_cache_ttl_days", "whois_monthly_floor",
-    "best_snapshot_top_n",
+    "best_snapshot_top_n", "best_snapshot_max_resources",
+    "best_snapshot_per_epoch_timeout_sec",
 }
 _FLOAT_FIELDS = {
     "cost_budget_per_domain", "ia_rate_limit", "ia_backoff",
