@@ -22,7 +22,9 @@ _EDITABLE_FIELDS = {
     "enable_verdict", "enable_smart_drop", "enable_redirect_llm",
     "max_llm_calls_per_domain", "cost_budget_per_domain",
     "text_limit", "title_shift_threshold", "light_fetch_cap",
+    "redirect_cap", "redirect_llm_review_cap",
     "concurrency", "ia_rate_limit", "ia_backoff", "ia_max_retries",
+    "per_domain_timeout_sec",
     "check_subdomains",
     # WHOIS
     "whois_api_key", "whois_enabled", "whois_rate_limit",
@@ -77,6 +79,15 @@ class Settings(BaseSettings):
     # Доменов с архивом по 1500+ версий гонять light fetch на каждую —
     # нереалистично (IA throttle: часы). Сэмплируем до этого числа.
     light_fetch_cap: int = Field(default=120, alias="LIGHT_FETCH_CAP")
+    # Сколько 3xx-снапшотов реально проверять. На доменах с 2000+
+    # редиректами фетч каждого через IA throttle = десятки минут.
+    redirect_cap: int = Field(default=150, alias="REDIRECT_CAP")
+    # Сверх скольких REVIEW-редиректов отключаем CDX-обогащение цели
+    # в llm_refine_redirects (слишком дорого).
+    redirect_llm_review_cap: int = Field(default=30, alias="REDIRECT_LLM_REVIEW_CAP")
+    # Жёсткий потолок времени на один домен. При превышении воркер
+    # помечает домен ERROR и идёт дальше, не зависая на пуле.
+    per_domain_timeout_sec: int = Field(default=1800, alias="PER_DOMAIN_TIMEOUT_SEC")
 
     # Concurrency & throttling — IA is the bottleneck, single shared gate
     concurrency: int = Field(default=4, alias="CONCURRENCY")
@@ -138,6 +149,15 @@ class Settings(BaseSettings):
                 "text_limit": self.text_limit,
                 "title_shift_threshold": self.title_shift_threshold,
                 "light_fetch_cap": self.light_fetch_cap,
+                "redirect_cap": self.redirect_cap,
+                "redirect_llm_review_cap": self.redirect_llm_review_cap,
+            },
+            "throttle": {
+                "concurrency": self.concurrency,
+                "ia_rate_limit": self.ia_rate_limit,
+                "ia_backoff": self.ia_backoff,
+                "ia_max_retries": self.ia_max_retries,
+                "per_domain_timeout_sec": self.per_domain_timeout_sec,
             },
             "throttle": {
                 "concurrency": self.concurrency,

@@ -176,16 +176,40 @@ async def analyze_redirects(
     *,
     source_domain: str,
     fetcher: SnapshotFetcher,
+    cap: int = 150,
+    progress=None,
 ) -> list[RedirectInfo]:
     """Classify a list of 3xx CDX rows for a domain.
 
     Returns RedirectInfo records, one per source 3xx row. Review-tagged
     records always carry a `snapshot_url` (without id_) per spec §7.2.
+
+    `cap` — на доменах с 2000+ редиректами (бывают часто, особенно
+    после кампаний с UTM-метками) фетчить каждый 3xx-снапшот через
+    общий IA-троттл (~1-4 req/sec) превращается в часы. Сэмплируем
+    равномерно по времени, чтобы охватить всю историю.
+    `progress` — async callable(msg) для трассировки.
     """
+    rows_list = list(rows)
+    total = len(rows_list)
+    if total > cap:
+        # Равномерный сэмпл по времени, как и в light fetch.
+        step = (total - 1) / (cap - 1) if cap > 1 else 0
+        keep = {int(round(i * step)) for i in range(cap)}
+        rows_list = [r for i, r in enumerate(rows_list) if i in keep]
+        if progress is not None:
+            await progress(
+                f"редиректы: {total} 3xx-снапшотов — сэмплируем "
+                f"{len(rows_list)} равномерно по времени (cap={cap})"
+            )
+
     results: list[RedirectInfo] = []
-    for row in rows:
+    BATCH = 25
+    done = 0
+    for row in rows_list:
         captured_at = _parse_ts(row.timestamp)
         if captured_at is None:
+            done += 1
             continue
         try:
             content = await fetcher.fetch(row.timestamp, row.original)
@@ -200,6 +224,9 @@ async def analyze_redirects(
                 reason=f"не удалось получить снапшот: {type(exc).__name__}",
                 snapshot_url=snapshot_url(row.timestamp, row.original, for_human=True),
             ))
+            done += 1
+            if progress is not None and done % BATCH == 0:
+                await progress(f"редиректы: {done}/{len(rows_list)}")
             continue
 
         target = _resolve_target(
@@ -224,6 +251,11 @@ async def analyze_redirects(
             reason=reason,
             snapshot_url=human_snap,
         ))
+        done += 1
+        if progress is not None and done % BATCH == 0:
+            await progress(f"редиректы: {done}/{len(rows_list)}")
+    if progress is not None and done % BATCH != 0:
+        await progress(f"редиректы: {done}/{len(rows_list)}")
     return results
 
 
@@ -283,27 +315,54 @@ async def llm_refine_redirects(
     model: str,
     fetcher: SnapshotFetcher,
     cdx=None,
+    review_cap: int = 30,
+    progress=None,
 ) -> list[RedirectInfo]:
     """Spec §9.3 — only on REVIEW-class borderline cases. Asks the model
     'same site / company move / hijack' based on topic of both sides;
     safety default §7.1 preserved: uncertain → stays REVIEW.
 
+    `review_cap` — потолок числа REVIEW-редиректов, которые мы
+    реально обогащаем (CDX + LLM). Сверх потолка остальные REVIEW
+    оставляем как есть. На доменах с тысячами 3xx этот пайплайн без
+    cap'а уходит в часы.
+
     If a `cdx` client is supplied, we fetch the target domain's nearest
     200-snapshot title/desc/h1 so the model actually sees topic on both
-    sides (spec wording: «модель решает по тематике обеих сторон»).
-    Without cdx we degrade to just passing target domain + URL.
+    sides. Without cdx we degrade to {domain, url}. Если REVIEW-
+    редиректов больше `review_cap`, мы автоматически отключаем CDX-
+    обогащение (слишком дорого) и идём в лёгком режиме.
     """
+    review_count = sum(1 for r in redirects
+                       if r.classification is RedirectClass.REVIEW and r.to_url)
+    use_cdx = cdx
+    if review_count > review_cap and cdx is not None:
+        use_cdx = None
+        if progress is not None:
+            await progress(
+                f"LLM-редиректы: REVIEW={review_count} > cap={review_cap} — "
+                f"отключаю CDX-обогащение цели (слишком дорого), "
+                f"остаюсь на тематике (domain+url)"
+            )
+
     out: list[RedirectInfo] = []
+    processed = 0
+    skipped_over_cap = 0
     for r in redirects:
         if r.classification is not RedirectClass.REVIEW or not r.to_url:
             out.append(r)
             continue
+        if processed >= review_cap:
+            # Остальные REVIEW оставляем без LLM-уточнения.
+            out.append(r)
+            skipped_over_cap += 1
+            continue
         target_topic: dict
-        if cdx is not None and r.target_domain:
+        if use_cdx is not None and r.target_domain:
             target_topic = await _fetch_target_topic_signal(
                 target_domain=r.target_domain,
                 near_timestamp=r.captured_at,
-                cdx=cdx,
+                cdx=use_cdx,
                 fetcher=fetcher,
             )
         else:
@@ -328,4 +387,12 @@ async def llm_refine_redirects(
             reason=f"LLM: {new_reason}" if new_reason else r.reason,
             snapshot_url=r.snapshot_url,
         ))
+        processed += 1
+        if progress is not None and processed % 10 == 0:
+            await progress(f"LLM-редиректы: {processed}/{min(review_count, review_cap)}")
+    if progress is not None and skipped_over_cap:
+        await progress(
+            f"LLM-редиректы: {skipped_over_cap} оставлены REVIEW без LLM "
+            f"(превысили cap={review_cap})"
+        )
     return out

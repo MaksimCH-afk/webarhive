@@ -220,10 +220,17 @@ async def process_domain(
         if history.redirect_rows:
             tracer.step("РЕДИРЕКТЫ", f"{len(history.redirect_rows)} 3xx-снапшотов")
             t0 = datetime.utcnow()
+
+            async def _redir_progress(msg: str) -> None:
+                tracer.info(msg)
+
+            redir_cap = int(limits.get("redirect_cap", 150))
             redirects = await analyze_redirects(
                 history.redirect_rows,
                 source_domain=domain_row.domain,
                 fetcher=fetcher,
+                cap=redir_cap,
+                progress=_redir_progress,
             )
             tracer.info(
                 f"редиректы: классифицировано {len(redirects)} за "
@@ -235,6 +242,7 @@ async def process_domain(
                     "domain": domain_row.domain,
                     "categories": [e.category for e in topic_result.epochs],
                 }
+                review_cap = int(limits.get("redirect_llm_review_cap", 30))
                 redirects = await llm_refine_redirects(
                     redirects,
                     source_topic=source_topic,
@@ -242,6 +250,8 @@ async def process_domain(
                     model=models["redirect"],
                     fetcher=fetcher,
                     cdx=cdx,
+                    review_cap=review_cap,
+                    progress=_redir_progress,
                 )
                 tracer.info("LLM-уточнение редиректов выполнено")
 
@@ -570,8 +580,11 @@ async def run_pipeline(
         # footprint, many redirects with all LLM roles on, etc.) can't
         # block the worker pool forever. Conservatively generous —
         # marks the domain as ERROR / PARTIAL on overrun.
+        # Default raised to 1800s — раньше 600s стабильно срезал большие
+        # архивы посреди фазы РЕДИРЕКТЫ или ТЕМАТИКА. Оператор может
+        # снизить или поднять через /settings → per_domain_timeout_sec.
         per_domain_timeout = float(settings_snapshot.get("throttle", {}).get(
-            "per_domain_timeout_sec", 600))
+            "per_domain_timeout_sec", 1800))
 
         try:
             async def worker(d: Domain) -> None:
@@ -595,19 +608,34 @@ async def run_pipeline(
                             "domain %s exceeded %ss timeout — marking error",
                             d.domain, per_domain_timeout,
                         )
+                        # Достаём последнюю строку live-flush'енной трассы,
+                        # чтобы оператор видел, на какой стадии оборвалось.
                         async with session_factory() as s:
                             row = await s.get(Domain, d.id)
                             if row is not None and row.status not in (
                                 DomainStatus.DONE.value,
                                 DomainStatus.PARTIAL.value,
                             ):
+                                # Парсим хвост трассы — последнюю «информативную» строку.
+                                last_step = "?"
+                                if row.trace:
+                                    lines = [ln for ln in row.trace.splitlines() if ln.strip()]
+                                    if lines:
+                                        last_step = lines[-1][-160:]
                                 row.status = DomainStatus.ERROR.value
                                 row.error_message = (
-                                    f"timeout after {per_domain_timeout}s "
-                                    f"(возможно, слишком много REVIEW-редиректов "
-                                    f"при включённом ENABLE_REDIRECT_LLM)"
+                                    f"timeout {per_domain_timeout:.0f}s · оборвалось на: «{last_step}». "
+                                    f"Если повторяется — поднимите per_domain_timeout_sec в /settings, "
+                                    f"или снизьте redirect_cap / light_fetch_cap / отключите ENABLE_REDIRECT_LLM."
                                 )
                                 row.finished_at = datetime.utcnow()
+                                # Дописываем явную строку в trace, чтобы в логе
+                                # был след «здесь сработал per_domain_timeout».
+                                row.trace = (row.trace or "") + (
+                                    f"\n[{datetime.utcnow():%Y-%m-%d %H:%M:%S}] "
+                                    f"[ERROR] >>> ОБОРВАНО по таймауту "
+                                    f"{per_domain_timeout:.0f}s · последний шаг: {last_step}\n"
+                                )
                                 await s.commit()
                     except Exception:
                         # process_domain already handled its own errors

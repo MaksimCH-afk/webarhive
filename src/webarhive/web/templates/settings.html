@@ -121,6 +121,14 @@
           <label class="field__lbl">light_fetch_cap{{ help_dot("На доменах с 1500+ сохранёнными версиями делать light fetch на каждую — нереалистично (часы при rate=4 req/s). Сэмплируем равномерно по времени до этого числа. Версии вне сэмпла наследуют категорию из соседних. Дефолт 120 — баланс полноты и скорости. Поставьте 999 если хотите фетчить ВСЁ.") }}</label>
           <input class="input" type="number" min="20" max="5000" name="light_fetch_cap" value="{{ fields.light_fetch_cap }}">
         </div>
+        <div class="field">
+          <label class="field__lbl">redirect_cap{{ help_dot("Сколько 3xx-снапшотов реально фетчить и классифицировать. На доменах с 2000+ редиректами (типично для UTM-кампаний) фетч каждого через троттл IA = десятки минут. Сэмплируем равномерно по времени. Дефолт 150.") }}</label>
+          <input class="input" type="number" min="20" max="5000" name="redirect_cap" value="{{ fields.redirect_cap }}">
+        </div>
+        <div class="field">
+          <label class="field__lbl">redirect_llm_review_cap{{ help_dot("Сверх скольких REVIEW-редиректов LLM-уточнение работает в лёгком режиме (без CDX-обогащения цели). Только при ENABLE_REDIRECT_LLM. Дефолт 30.") }}</label>
+          <input class="input" type="number" min="0" max="500" name="redirect_llm_review_cap" value="{{ fields.redirect_llm_review_cap }}">
+        </div>
       </div>
     </section>
 
@@ -143,6 +151,10 @@
         <div class="field">
           <label class="field__lbl">ia_max_retries{{ help_dot("Сколько раз пытаться повторить запрос к IA при transient ошибке. 4xx (кроме 429) не ретраятся — пропускаются сразу.") }}</label>
           <input class="input" type="number" min="0" max="20" name="ia_max_retries" value="{{ fields.ia_max_retries }}">
+        </div>
+        <div class="field">
+          <label class="field__lbl">per_domain_timeout_sec{{ help_dot("Жёсткий потолок времени на ОДИН домен (в секундах). При превышении воркер помечает домен ERROR и пишет в trace, на каком шаге оборвалось. Дефолт 1800 (30 мин). На очень крупных архивах с включёнными всеми LLM-ролями ставьте 3600.") }}</label>
+          <input class="input" type="number" min="60" max="14400" name="per_domain_timeout_sec" value="{{ fields.per_domain_timeout_sec }}">
         </div>
       </div>
     </section>
