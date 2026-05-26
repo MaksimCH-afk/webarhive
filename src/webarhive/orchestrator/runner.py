@@ -124,11 +124,38 @@ async def process_domain(
             "other": sum(1 for r in cdx_rows if r.status_bucket == "other"),
         }
         history = summarize_history(cdx_rows)
+
+        # Client-side digest dedup (spec §6 «по версиям после схлопывания
+        # по digest, а НЕ по каждому снапшоту»). CDX-server collapse уже
+        # схлопнул дубли внутри одной URL-группы; здесь мы дополнительно
+        # схлопываем по digest через ВСЕ URL — если index.html, /home и
+        # /?utm=x сохранены с одинаковым контентом, это одна версия.
+        # Только для 200-rows — редиректы/404 оставляем как есть, у них
+        # digest не несёт смысла.
+        live_before_dedup = len(history.live_versions)
+        seen_digest: set[str] = set()
+        deduped_live: list = []
+        for r in history.live_versions:
+            if r.digest and r.digest in seen_digest:
+                continue
+            if r.digest:
+                seen_digest.add(r.digest)
+            deduped_live.append(r)
+        history.by_bucket["200"] = deduped_live
+        dropped = live_before_dedup - len(deduped_live)
+
+        # Реальная сводка с двумя цифрами: до клиентского dedup и после.
         tracer.cdx_summary(
             total=len(cdx_rows),
-            after_collapse=len(cdx_rows),  # CDX-side collapse=digest already applied
+            after_collapse=len(cdx_rows) - dropped,
             buckets=buckets_total,
         )
+        if dropped:
+            tracer.info(
+                f"digest-дедуп: 200-снапшотов {live_before_dedup} → "
+                f"{len(deduped_live)} уникальных версий "
+                f"(отброшено {dropped} дублей)"
+            )
 
         if not cdx_rows:
             final_status = DomainStatus.NO_DATA
@@ -136,10 +163,8 @@ async def process_domain(
 
         # --- Topics (only on 200 rows, chronologically sorted) ---
         topic_result = TopicResult()
-        if history.live_versions and llm is not None:
-            sorted_live = sorted(
-                history.live_versions, key=lambda r: r.timestamp
-            )
+        if deduped_live and llm is not None:
+            sorted_live = sorted(deduped_live, key=lambda r: r.timestamp)
             tracer.step("ТЕМАТИКА", f"{len(sorted_live)} версий со статусом 200")
 
             audit_run_id = run_id
@@ -187,7 +212,7 @@ async def process_domain(
                 shift_points=len([v for v in topic_result.versions if v.classified]),
                 llm_budget=limits["max_llm_calls_per_domain"],
             )
-        elif history.live_versions and llm is None:
+        elif deduped_live and llm is None:
             tracer.warn("LLM-клиент не подключён — тематика не классифицирована")
 
         # --- Redirects ---
@@ -344,7 +369,11 @@ async def process_domain(
             d.last_capture_at = history.last_capture_at
             d.age_days = history.age_days
             d.total_captures = history.total_captures
-            d.total_versions = len(history.live_versions) + len(history.redirect_rows)
+            # «версии после схлопывания» — уникальные digest 200-снапшотов
+            # (то, что реально пошло в анализ тематики) + редиректы как
+            # сигнал поведения, без дедупа (они в анализе тематики не
+            # участвуют, но в карточке — отдельный счётчик).
+            d.total_versions = len(deduped_live) + len(history.redirect_rows)
             d.risky_flag_count = verdict_result.risky_flag_count
             d.review_flag_count = verdict_result.review_flag_count
             d.verdict = verdict_result.verdict.value if verdict_result.verdict else None
