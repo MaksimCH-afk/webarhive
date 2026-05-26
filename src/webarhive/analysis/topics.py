@@ -174,6 +174,7 @@ async def classify_topics(
     max_llm_calls: int,
     audit: AuditFn | None = None,
     light_fetch_cap: int = 120,
+    llm_parallelism: int = 16,
     progress=None,
 ) -> TopicResult:
     """Run the full 3-stage pipeline on 200-status CDX rows.
@@ -258,56 +259,93 @@ async def classify_topics(
         if is_shift(prev_fp, curr_fp, threshold=title_shift_threshold):
             shift_indices.append(i)
 
-    # Stage 3: heavy fetch + LLM only on shift points.
-    for idx in shift_indices:
-        if result.llm_calls_used >= max_llm_calls:
-            result.partial = True
-            logger.info("topics: hit max_llm_calls=%d, marking partial", max_llm_calls)
-            break
-        v = versions[idx]
-        v.heavy = await _fetch_heavy(fetcher, v.row, text_limit=text_limit)
-        if v.heavy is None or (not v.heavy.title and not v.heavy.description
-                               and not v.heavy.h1 and not v.heavy.body_text):
-            # Empty content — record as пусто_нет_контента without LLM call.
-            v.category = "пусто_нет_контента"
-            v.confidence = None
-            v.reason = "пустой снапшот"
-            v.classified = False
-            continue
-
-        sys_p, usr_p = build_classification_prompt(
-            title=v.heavy.title,
-            description=v.heavy.description,
-            h1=v.heavy.h1,
-            body_text=v.heavy.body_text,
+    # Stage 3: heavy fetch + LLM. Раньше шло строго последовательно
+    # (for idx in shift_indices: await llm). На больших архивах с 40
+    # точками сдвига это ~4 минуты на домен только в LLM. Теперь:
+    # 1) если light fetch успел и его 16 KB-выборки достаточно для
+    #    text_limit символов body_text, переиспользуем её как `heavy`
+    #    — это экономит ещё один snapshot-fetch на каждой точке;
+    # 2) LLM-вызовы летят параллельно через asyncio.gather со скользящим
+    #    окном (semaphore=llm_parallelism). Бюджет max_llm_calls по-
+    #    прежнему уважается, лимит — порядок shift_indices.
+    eligible_indices = shift_indices[:max_llm_calls]
+    if len(shift_indices) > max_llm_calls:
+        result.partial = True
+        logger.info(
+            "topics: hit max_llm_calls=%d, marking partial", max_llm_calls,
         )
-        response = await llm.chat_json(
-            model=model,
-            system_prompt=sys_p,
-            user_prompt=usr_p,
-        )
-        result.llm_calls_used += 1
-        v.classified = True
 
-        cat, conf, reason = _coerce_category(response.parsed)
-        v.category = cat
-        v.confidence = conf
-        v.reason = reason
+    sem = asyncio.Semaphore(max(1, int(llm_parallelism)))
 
-        if audit is not None:
-            await audit(
-                role="classification",
-                model=response.model,
-                snapshot_url_value=v.snapshot_url_human,
-                input_text=usr_p,
-                output=response.parsed,
-                raw_output=response.raw_text,
-                prompt_tokens=response.prompt_tokens,
-                completion_tokens=response.completion_tokens,
-                cost_usd=response.cost_usd,
-                latency_ms=response.latency_ms,
-                error=response.error,
+    async def _classify_one(idx: int) -> None:
+        async with sem:
+            v = versions[idx]
+            # Reuse light fetch когда он покрывает text_limit. Light
+            # читает первые 16 KB сырого HTML; после parse_html у нас
+            # обычно >2-5 KB чистого body_text — для text_limit=1000
+            # этого с большим запасом. Если light нет — фоллбэк на heavy.
+            light = v.light
+            if (
+                light is not None
+                and light.body_text is not None
+                and len(light.body_text) >= text_limit
+            ):
+                heavy_like = ParsedPage(
+                    title=light.title,
+                    description=light.description,
+                    h1=light.h1,
+                    body_text=light.body_text[:text_limit],
+                )
+                v.heavy = heavy_like
+            else:
+                v.heavy = await _fetch_heavy(fetcher, v.row, text_limit=text_limit)
+            if v.heavy is None or (
+                not v.heavy.title
+                and not v.heavy.description
+                and not v.heavy.h1
+                and not v.heavy.body_text
+            ):
+                v.category = "пусто_нет_контента"
+                v.confidence = None
+                v.reason = "пустой снапшот"
+                v.classified = False
+                return
+
+            sys_p, usr_p = build_classification_prompt(
+                title=v.heavy.title,
+                description=v.heavy.description,
+                h1=v.heavy.h1,
+                body_text=v.heavy.body_text,
             )
+            response = await llm.chat_json(
+                model=model,
+                system_prompt=sys_p,
+                user_prompt=usr_p,
+            )
+            v.classified = True
+
+            cat, conf, reason = _coerce_category(response.parsed)
+            v.category = cat
+            v.confidence = conf
+            v.reason = reason
+
+            if audit is not None:
+                await audit(
+                    role="classification",
+                    model=response.model,
+                    snapshot_url_value=v.snapshot_url_human,
+                    input_text=usr_p,
+                    output=response.parsed,
+                    raw_output=response.raw_text,
+                    prompt_tokens=response.prompt_tokens,
+                    completion_tokens=response.completion_tokens,
+                    cost_usd=response.cost_usd,
+                    latency_ms=response.latency_ms,
+                    error=response.error,
+                )
+
+    await asyncio.gather(*(_classify_one(idx) for idx in eligible_indices))
+    result.llm_calls_used = sum(1 for v in versions if v.classified)
 
     # Forward-fill category for the non-shift versions: they share the
     # category of the most recent classified version (since by definition

@@ -25,25 +25,37 @@ FlushFn = Callable[[str], Awaitable[None]]
 
 
 class DomainTracer:
-    """Per-domain trace buffer with optional live flush to DB.
+    """Per-domain trace buffer with optional debounced flush to DB.
 
-    Each `info/warn/step/...` call appends a line AND schedules a
-    background flush. We use create_task so the line shows up in the
-    DB without blocking the worker that's writing it.
+    Each `info/warn/step/...` call appends a line and arms a debounced
+    flush. Multiple writes within `flush_debounce_sec` collapse to a
+    single DB write — на параллельной LLM-фазе раньше уходило по 40
+    SQLite-транзакций подряд, теперь они склеиваются в 2-3.
+    `drain()` гарантирует, что финальный текст всё равно ляжет в DB.
     """
 
-    def __init__(self, domain: str, flush_fn: FlushFn | None = None) -> None:
+    def __init__(
+        self,
+        domain: str,
+        flush_fn: FlushFn | None = None,
+        flush_debounce_sec: float = 0.5,
+    ) -> None:
         self.domain = domain
         self._buf = io.StringIO()
         self._started = datetime.utcnow()
         self._flush_fn = flush_fn
+        self._flush_debounce_sec = flush_debounce_sec
         # Track in-flight flushes so we can await them on shutdown.
         self._pending: set[asyncio.Task] = set()
+        # Pending debounce timer (if a write happened recently).
+        self._timer: asyncio.Task | None = None
+        # Lock so concurrent writes don't double-schedule the timer.
+        self._timer_lock = asyncio.Lock()
         self._write("START", f"начало обработки {domain}")
 
     # ----- write helpers -----
 
-    def _schedule_flush(self) -> None:
+    def _do_flush(self) -> None:
         if self._flush_fn is None:
             return
         try:
@@ -53,6 +65,27 @@ class DomainTracer:
         task = loop.create_task(self._flush_fn(self.text()))
         self._pending.add(task)
         task.add_done_callback(self._pending.discard)
+
+    async def _flush_after_debounce(self) -> None:
+        try:
+            await asyncio.sleep(self._flush_debounce_sec)
+        except asyncio.CancelledError:
+            return
+        self._timer = None
+        self._do_flush()
+
+    def _schedule_flush(self) -> None:
+        if self._flush_fn is None:
+            return
+        # Если таймер уже взведён — не плодим лишних задач: финальное
+        # состояние буфера всё равно попадёт в DB одной записью.
+        if self._timer is not None and not self._timer.done():
+            return
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            return
+        self._timer = loop.create_task(self._flush_after_debounce())
 
     def _write(self, level: str, msg: str) -> None:
         ts = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
@@ -68,7 +101,7 @@ class DomainTracer:
                 self.domain,
                 msg,
             )
-        # Live-flush to DB so the card page can read this line right away.
+        # Schedule a debounced flush — bursty writes (parallel LLM) coalesce.
         self._schedule_flush()
 
     def info(self, msg: str) -> None:
@@ -132,7 +165,18 @@ class DomainTracer:
         return self._buf.getvalue()
 
     async def drain(self) -> None:
-        """Wait for any in-flight flushes to complete. Call before the
-        worker exits to make sure the final trace lands in DB."""
+        """Cancel any pending debounce timer, force a final flush, and
+        wait for it to complete. Call before the worker exits to make
+        sure the final trace state lands in DB."""
+        if self._timer is not None and not self._timer.done():
+            self._timer.cancel()
+            try:
+                await self._timer
+            except (asyncio.CancelledError, Exception):
+                pass
+            self._timer = None
+        # Force one last flush — captures anything written since the last
+        # debounced flush fired.
+        self._do_flush()
         if self._pending:
             await asyncio.gather(*self._pending, return_exceptions=True)

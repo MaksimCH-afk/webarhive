@@ -24,7 +24,8 @@ _EDITABLE_FIELDS = {
     "text_limit", "title_shift_threshold", "light_fetch_cap",
     "redirect_cap", "redirect_llm_review_cap",
     "concurrency", "ia_rate_limit", "ia_backoff", "ia_max_retries",
-    "per_domain_timeout_sec",
+    "per_domain_timeout_sec", "llm_parallelism",
+    "best_snapshot_epoch_parallelism",
     "check_subdomains",
     # WHOIS
     "whois_api_key", "whois_enabled", "whois_rate_limit",
@@ -75,7 +76,11 @@ class Settings(BaseSettings):
     # Budgets and analysis thresholds
     max_llm_calls_per_domain: int = Field(default=40, alias="MAX_LLM_CALLS_PER_DOMAIN")
     cost_budget_per_domain: float = Field(default=0.5, alias="COST_BUDGET_PER_DOMAIN")
-    text_limit: int = Field(default=2000, alias="TEXT_LIMIT")
+    # text_limit обрезает body_text для классификации. Топовая модель
+    # gpt-4o-mini читает <title>/<meta>/<h1> и первые ~1000 символов
+    # текста — этого хватает, дальше латентность LLM растёт без улучшения
+    # качества. 1000 = ~250 токенов на чанк текста.
+    text_limit: int = Field(default=1000, alias="TEXT_LIMIT")
     title_shift_threshold: int = Field(default=2, alias="TITLE_SHIFT_THRESHOLD")
     # Доменов с архивом по 1500+ версий гонять light fetch на каждую —
     # нереалистично (IA throttle: часы). Сэмплируем до этого числа.
@@ -89,6 +94,16 @@ class Settings(BaseSettings):
     # Жёсткий потолок времени на один домен. При превышении воркер
     # помечает домен ERROR и идёт дальше, не зависая на пуле.
     per_domain_timeout_sec: int = Field(default=1800, alias="PER_DOMAIN_TIMEOUT_SEC")
+    # Скользящее окно параллельных LLM-вызовов на ОДИН домен. Когда
+    # точек сдвига много (40 классификаций), последовательный await
+    # съедал ~4 минуты на домен. С окном 16 эта фаза падает до ~15-30с.
+    # OpenRouter спокойно держит десятки конкурентных запросов на платном
+    # тарифе; снижать до 4-8 имеет смысл только если упёрлись в RPM лимит.
+    llm_parallelism: int = Field(default=16, alias="LLM_PARALLELISM")
+    # Сколько эпох best-snapshot обрабатываем параллельно. Каждая эпоха
+    # делает HTML-фетч + Availability-чек на ресурсы, но всё это сквозь
+    # общий IA throttle — поэтому 3-5 уже достаточно, выше — впустую.
+    best_snapshot_epoch_parallelism: int = Field(default=3, alias="BEST_SNAPSHOT_EPOCH_PARALLELISM")
 
     # Concurrency & throttling — IA is the bottleneck, single shared gate
     concurrency: int = Field(default=4, alias="CONCURRENCY")
@@ -161,6 +176,7 @@ class Settings(BaseSettings):
                 "light_fetch_cap": self.light_fetch_cap,
                 "redirect_cap": self.redirect_cap,
                 "redirect_llm_review_cap": self.redirect_llm_review_cap,
+                "llm_parallelism": self.llm_parallelism,
             },
             "throttle": {
                 "concurrency": self.concurrency,
@@ -183,6 +199,7 @@ class Settings(BaseSettings):
                 "top_n": self.best_snapshot_top_n,
                 "max_resources_per_candidate": self.best_snapshot_max_resources,
                 "per_epoch_timeout_sec": self.best_snapshot_per_epoch_timeout_sec,
+                "epoch_parallelism": self.best_snapshot_epoch_parallelism,
                 "content_llm": self.enable_best_snapshot_content_llm,
             },
         }

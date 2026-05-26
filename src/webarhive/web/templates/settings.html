@@ -129,6 +129,10 @@
           <label class="field__lbl">redirect_llm_review_cap{{ help_dot("Сверх скольких REVIEW-редиректов LLM-уточнение работает в лёгком режиме (без CDX-обогащения цели). Только при ENABLE_REDIRECT_LLM. Дефолт 30.") }}</label>
           <input class="input" type="number" min="0" max="500" name="redirect_llm_review_cap" value="{{ fields.redirect_llm_review_cap }}">
         </div>
+        <div class="field">
+          <label class="field__lbl">llm_parallelism{{ help_dot("Сколько LLM-вызовов классификации летят параллельно на одном домене. Точки сдвига независимы — раньше шли последовательно (40 × 6с = 4 минуты), теперь скользящее окно. Дефолт 16. Снижайте, если OpenRouter упирается в RPM-лимит вашего тарифа.") }}</label>
+          <input class="input" type="number" min="1" max="64" name="llm_parallelism" value="{{ fields.llm_parallelism }}">
+        </div>
       </div>
     </section>
 
@@ -213,6 +217,10 @@
         <div class="field">
           <label class="field__lbl">best_snapshot_per_epoch_timeout_sec{{ help_dot("Жёсткий потолок на одну эпоху best-snapshot. При превышении эпоха пропускается, остальные продолжают. Дефолт 90 секунд.") }}</label>
           <input class="input" type="number" min="10" max="600" name="best_snapshot_per_epoch_timeout_sec" value="{{ fields.best_snapshot_per_epoch_timeout_sec }}">
+        </div>
+        <div class="field">
+          <label class="field__lbl">best_snapshot_epoch_parallelism{{ help_dot("Сколько эпох best-snapshot обрабатываются параллельно. Общий IA-троттл всё равно лимитирует rate, но пока одна эпоха ждёт availability-чек, другая может уже фетчить HTML. Дефолт 3.") }}</label>
+          <input class="input" type="number" min="1" max="10" name="best_snapshot_epoch_parallelism" value="{{ fields.best_snapshot_epoch_parallelism }}">
         </div>
         <div class="field" style="justify-content:end">
           <label class="toggle {% if fields.enable_best_snapshot_content_llm %}toggle--on{% endif %}">

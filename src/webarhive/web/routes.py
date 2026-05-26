@@ -268,6 +268,7 @@ _INT_FIELDS = {
     "whois_cache_ttl_days", "whois_monthly_floor",
     "best_snapshot_top_n", "best_snapshot_max_resources",
     "best_snapshot_per_epoch_timeout_sec",
+    "llm_parallelism", "best_snapshot_epoch_parallelism",
 }
 _FLOAT_FIELDS = {
     "cost_budget_per_domain", "ia_rate_limit", "ia_backoff",

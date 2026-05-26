@@ -221,6 +221,7 @@ async def process_domain(
                 max_llm_calls=limits["max_llm_calls_per_domain"],
                 audit=audit,
                 light_fetch_cap=int(limits.get("light_fetch_cap", 120)),
+                llm_parallelism=int(limits.get("llm_parallelism", 16)),
                 progress=_topic_progress,
             )
             topic_partial = topic_result.partial
@@ -367,40 +368,47 @@ async def process_domain(
             top_n = int(bs_cfg.get("top_n", 3))
             max_res = int(bs_cfg.get("max_resources_per_candidate", 8))
             per_epoch_timeout = float(bs_cfg.get("per_epoch_timeout_sec", 90))
+            epoch_parallelism = max(1, int(bs_cfg.get("epoch_parallelism", 3)))
             home_rows = filter_home_page_rows(cdx_rows, domain_row.domain)
 
             async def _bs_progress(msg: str) -> None:
                 tracer.info(msg)
 
-            for i, ep in enumerate(topic_result.epochs):
+            # Параллельные эпохи (скользящее окно). Общий IA throttle всё
+            # равно лимитирует rate, но пока одна эпоха ждёт следующий
+            # availability-чек, другая может уже фетчить HTML.
+            bs_sem = asyncio.Semaphore(epoch_parallelism)
+
+            async def _process_epoch(i: int, ep) -> None:
                 cands = epoch_candidates(home_rows, ep.period_from, ep.period_to)
                 if not cands:
                     tracer.info(f"эпоха #{i+1}: лучший слепок недоступен (нет 200-главной)")
-                    continue
+                    return
                 if http is None or throttle is None:
                     tracer.warn(f"эпоха #{i+1}: http/throttle не пробросаны — пропускаю best-snap")
-                    continue
-                try:
-                    best = await asyncio.wait_for(
-                        best_snapshot_for_epoch(
-                            epoch_idx=i, candidates=cands,
-                            source_domain=domain_row.domain,
-                            fetcher=fetcher, cdx=cdx,
-                            http=http, throttle=throttle,
-                            top_n=top_n,
-                            max_resources_per_candidate=max_res,
-                            progress=_bs_progress,
-                        ),
-                        timeout=per_epoch_timeout,
-                    )
-                except asyncio.TimeoutError:
-                    tracer.warn(
-                        f"эпоха #{i+1}: best-snap превысил {per_epoch_timeout:.0f}s — пропускаю"
-                    )
-                    continue
-                except Exception as exc:
-                    tracer.warn(f"эпоха #{i+1}: best-snap упал — {exc}")
-                    continue
+                    return
+                async with bs_sem:
+                    try:
+                        best = await asyncio.wait_for(
+                            best_snapshot_for_epoch(
+                                epoch_idx=i, candidates=cands,
+                                source_domain=domain_row.domain,
+                                fetcher=fetcher, cdx=cdx,
+                                http=http, throttle=throttle,
+                                top_n=top_n,
+                                max_resources_per_candidate=max_res,
+                                progress=_bs_progress,
+                            ),
+                            timeout=per_epoch_timeout,
+                        )
+                    except asyncio.TimeoutError:
+                        tracer.warn(
+                            f"эпоха #{i+1}: best-snap превысил {per_epoch_timeout:.0f}s — пропускаю"
+                        )
+                        return
+                    except Exception as exc:
+                        tracer.warn(f"эпоха #{i+1}: best-snap упал — {exc}")
+                        return
                 if best is not None:
                     epoch_best[i] = best
                     tracer.info(
@@ -408,6 +416,10 @@ async def process_domain(
                         f"score {best.score} · ресурсов {best.resources_archived}/"
                         f"{best.resources_total}"
                     )
+
+            await asyncio.gather(*(
+                _process_epoch(i, ep) for i, ep in enumerate(topic_result.epochs)
+            ))
 
         # --- Persist result components ---
         async with session_factory() as s:
