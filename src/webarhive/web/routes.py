@@ -263,7 +263,7 @@ _BOOL_FIELDS = {
 }
 _INT_FIELDS = {
     "max_llm_calls_per_domain", "text_limit", "title_shift_threshold",
-    "concurrency", "ia_max_retries",
+    "concurrency", "ia_max_retries", "light_fetch_cap",
     "whois_cache_ttl_days", "whois_monthly_floor",
     "best_snapshot_top_n",
 }

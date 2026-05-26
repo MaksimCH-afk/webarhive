@@ -166,6 +166,9 @@ async def process_domain(
                                 tokens_in=prompt_tokens,
                                 latency_ms=latency_ms)
 
+            async def _topic_progress(msg: str) -> None:
+                tracer.info(msg)
+
             topic_result = await classify_topics(
                 sorted_live,
                 fetcher=fetcher,
@@ -175,6 +178,8 @@ async def process_domain(
                 title_shift_threshold=limits["title_shift_threshold"],
                 max_llm_calls=limits["max_llm_calls_per_domain"],
                 audit=audit,
+                light_fetch_cap=int(limits.get("light_fetch_cap", 120)),
+                progress=_topic_progress,
             )
             topic_partial = topic_result.partial
             tracer.topics_plan(
@@ -189,10 +194,15 @@ async def process_domain(
         redirects: list[RedirectInfo] = []
         if history.redirect_rows:
             tracer.step("РЕДИРЕКТЫ", f"{len(history.redirect_rows)} 3xx-снапшотов")
+            t0 = datetime.utcnow()
             redirects = await analyze_redirects(
                 history.redirect_rows,
                 source_domain=domain_row.domain,
                 fetcher=fetcher,
+            )
+            tracer.info(
+                f"редиректы: классифицировано {len(redirects)} за "
+                f"{(datetime.utcnow() - t0).total_seconds():.1f}s"
             )
             if roles.get("redirect_llm") and llm is not None and redirects:
                 # spec §9.3: only borderline (REVIEW) cases get the LLM tiebreaker

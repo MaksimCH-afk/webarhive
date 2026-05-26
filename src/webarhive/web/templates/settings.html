@@ -107,7 +107,7 @@
         </div>
         <div class="field">
           <label class="field__lbl">cost_budget_per_domain ($){{ help_dot("Грубый счётчик стоимости — справочное значение, на жёсткую остановку не влияет (этим занимается лимит вызовов).") }}</label>
-          <input class="input" type="number" step="0.01" name="cost_budget_per_domain" value="{{ fields.cost_budget_per_domain }}">
+          <input class="input" type="number" step="any" name="cost_budget_per_domain" value="{{ fields.cost_budget_per_domain }}">
         </div>
         <div class="field">
           <label class="field__lbl">text_limit (тело страницы){{ help_dot("Сколько символов значимого текста страницы отправлять в LLM на классификацию (после очистки от навигации/футера). title, description и h1 идут сверх этого лимита.") }}</label>
@@ -116,6 +116,10 @@
         <div class="field">
           <label class="field__lbl">title_shift_threshold{{ help_dot("Версия идёт в LLM, только если в title+description+h1 поменялось БОЛЬШЕ N значимых слов (стоп-слова и порядок игнорируются). Дефолт 2 — экономит вызовы на косметических правках.") }}</label>
           <input class="input" type="number" min="0" max="20" name="title_shift_threshold" value="{{ fields.title_shift_threshold }}">
+        </div>
+        <div class="field">
+          <label class="field__lbl">light_fetch_cap{{ help_dot("На доменах с 1500+ сохранёнными версиями делать light fetch на каждую — нереалистично (часы при rate=4 req/s). Сэмплируем равномерно по времени до этого числа. Версии вне сэмпла наследуют категорию из соседних. Дефолт 120 — баланс полноты и скорости. Поставьте 999 если хотите фетчить ВСЁ.") }}</label>
+          <input class="input" type="number" min="20" max="5000" name="light_fetch_cap" value="{{ fields.light_fetch_cap }}">
         </div>
       </div>
     </section>
@@ -130,11 +134,11 @@
         </div>
         <div class="field">
           <label class="field__lbl">ia_rate_limit (req/sec){{ help_dot("Общий вентиль на ВСЕ запросы к Internet Archive (CDX + снапшоты) суммарно по всем параллельным доменам. Если ловите 429 — уменьшите.") }}</label>
-          <input class="input" type="number" step="0.1" name="ia_rate_limit" value="{{ fields.ia_rate_limit }}">
+          <input class="input" type="number" step="any" name="ia_rate_limit" value="{{ fields.ia_rate_limit }}">
         </div>
         <div class="field">
           <label class="field__lbl">ia_backoff (сек, база){{ help_dot("База экспоненциального backoff между ретраями к IA при 429/5xx. Реальные задержки: 2·base, 4·base, 8·base, 16·base, 32·base (capped до 60).") }}</label>
-          <input class="input" type="number" step="0.1" name="ia_backoff" value="{{ fields.ia_backoff }}">
+          <input class="input" type="number" step="any" name="ia_backoff" value="{{ fields.ia_backoff }}">
         </div>
         <div class="field">
           <label class="field__lbl">ia_max_retries{{ help_dot("Сколько раз пытаться повторить запрос к IA при transient ошибке. 4xx (кроме 429) не ретраятся — пропускаются сразу.") }}</label>
@@ -168,7 +172,7 @@
         </div>
         <div class="field">
           <label class="field__lbl">whois_rate_limit (req/sec){{ help_dot("Бесплатный план WhoisJSON разрешает 20 запросов/мин. Дефолт 0.33 req/sec = 20/мин с запасом.") }}</label>
-          <input class="input" type="number" step="0.01" min="0.05" max="5" name="whois_rate_limit" value="{{ fields.whois_rate_limit }}">
+          <input class="input" type="number" step="any" min="0.05" max="5" name="whois_rate_limit" value="{{ fields.whois_rate_limit|round(2) }}">
         </div>
         <div class="field">
           <label class="field__lbl">whois_monthly_floor{{ help_dot("Если месячный остаток лимита (заголовок Remaining-Requests) опустился ниже этого порога — перестаём дёргать API на этом прогоне. Защищает от 429 и сохраняет лимит для других прогонов в месяце.") }}</label>

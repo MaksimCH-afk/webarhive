@@ -21,7 +21,7 @@ _EDITABLE_FIELDS = {
     "model_classification", "model_verdict", "model_smart_drop", "model_redirect",
     "enable_verdict", "enable_smart_drop", "enable_redirect_llm",
     "max_llm_calls_per_domain", "cost_budget_per_domain",
-    "text_limit", "title_shift_threshold",
+    "text_limit", "title_shift_threshold", "light_fetch_cap",
     "concurrency", "ia_rate_limit", "ia_backoff", "ia_max_retries",
     "check_subdomains",
     # WHOIS
@@ -74,6 +74,9 @@ class Settings(BaseSettings):
     cost_budget_per_domain: float = Field(default=0.5, alias="COST_BUDGET_PER_DOMAIN")
     text_limit: int = Field(default=2000, alias="TEXT_LIMIT")
     title_shift_threshold: int = Field(default=2, alias="TITLE_SHIFT_THRESHOLD")
+    # Доменов с архивом по 1500+ версий гонять light fetch на каждую —
+    # нереалистично (IA throttle: часы). Сэмплируем до этого числа.
+    light_fetch_cap: int = Field(default=120, alias="LIGHT_FETCH_CAP")
 
     # Concurrency & throttling — IA is the bottleneck, single shared gate
     concurrency: int = Field(default=4, alias="CONCURRENCY")
@@ -134,6 +137,7 @@ class Settings(BaseSettings):
                 "cost_budget_per_domain": self.cost_budget_per_domain,
                 "text_limit": self.text_limit,
                 "title_shift_threshold": self.title_shift_threshold,
+                "light_fetch_cap": self.light_fetch_cap,
             },
             "throttle": {
                 "concurrency": self.concurrency,

@@ -165,11 +165,20 @@ async def classify_topics(
     title_shift_threshold: int,
     max_llm_calls: int,
     audit: AuditFn | None = None,
+    light_fetch_cap: int = 120,
+    progress=None,
 ) -> TopicResult:
     """Run the full 3-stage pipeline on 200-status CDX rows.
 
     Rows must already be 200-only and chronologically sorted ascending.
-    Returns TopicResult with epochs + per-version detail + budget flag.
+    `light_fetch_cap` — если версий больше, отбираем равномерно по
+    времени; иначе light fetch на 1000+ версий на доменах с богатым
+    архивом превращается в часы ожидания (IA throttle + параллельные
+    воркеры). Когда оператор хочет полноту, он повысит этот лимит.
+
+    `progress` — async callable (msg: str) — куда стримить прогресс
+    в трассировку домена; вызывается на каждый шаг (каждые ~25 версий
+    в light fetch + переход stage'ов).
     """
     result = TopicResult()
     if not rows:
@@ -190,13 +199,45 @@ async def classify_topics(
         return result
     versions.sort(key=lambda v: v.captured_at)
 
-    # Stage 1: light fetch in parallel (cheap title+desc+h1 per version).
-    # We bound concurrency lightly here; the shared IA throttle is the
-    # real gate.
+    # Sampling: на доменах с большим архивом (1500+ live versions) light
+    # fetch на каждую версию становится узким местом — на rate=4 req/s
+    # это часы только на одну стадию. Сэмплируем равномерно по времени:
+    # первая, последняя и evenly-spaced остальные. Версии, выпавшие из
+    # сэмпла, всё равно «доедут» до эпох — forward-fill из соседних.
+    total_versions = len(versions)
+    if total_versions > light_fetch_cap:
+        step = (total_versions - 1) / (light_fetch_cap - 1)
+        keep_indices = {int(round(i * step)) for i in range(light_fetch_cap)}
+        sampled = [versions[i] for i in sorted(keep_indices)]
+        if progress is not None:
+            await progress(
+                f"тематика: {total_versions} версий — сэмплируем "
+                f"{len(sampled)} равномерно по времени (cap={light_fetch_cap})"
+            )
+    else:
+        sampled = versions
+
+    # Stage 1: light fetch с прогрессом. На rate~4/sec и параллельных
+    # воркерах раньше эта фаза молча висела минутами. Теперь отчитываемся.
     async def _light_task(v: VersionInfo) -> None:
         v.light = await _fetch_light(fetcher, v.row)
 
-    await asyncio.gather(*(_light_task(v) for v in versions))
+    if progress is not None:
+        await progress(f">>> light fetch для {len(sampled)} версий")
+    # Идём батчами по 25, чтобы между батчами писать в трассировку
+    # «25/356», «50/356», … Тогда видно, что фаза идёт, а не висит.
+    BATCH = 25
+    done = 0
+    for i in range(0, len(sampled), BATCH):
+        chunk = sampled[i : i + BATCH]
+        await asyncio.gather(*(_light_task(v) for v in chunk))
+        done += len(chunk)
+        if progress is not None and (done < len(sampled) or done == len(sampled)):
+            await progress(f"light fetch: {done}/{len(sampled)}")
+
+    # Дальше работаем только с sampled — остальные позже получат
+    # категорию через forward-fill.
+    versions = sampled
 
     # Stage 2: shift detection — spec §6 etap 2 wording is "соседних
     # версий", so each version is compared against its IMMEDIATE
