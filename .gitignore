@@ -11,6 +11,8 @@ venv/
 *.sqlite3
 data/*.db
 data/*.sqlite*
+data/settings.json
+data/
 .pytest_cache/
 .mypy_cache/
 .ruff_cache/
