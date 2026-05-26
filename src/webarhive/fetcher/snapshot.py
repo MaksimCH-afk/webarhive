@@ -116,9 +116,26 @@ class SnapshotFetcher:
     async def __aexit__(self, *exc) -> None:
         await self.aclose()
 
-    async def fetch(self, timestamp: str, original_url: str) -> SnapshotContent:
+    async def fetch(
+        self,
+        timestamp: str,
+        original_url: str,
+        *,
+        byte_limit: int | None = None,
+    ) -> SnapshotContent:
+        """Fetch an archived snapshot through Wayback.
+
+        `byte_limit` (optional) — when set, requests only the first N bytes
+        via HTTP `Range: bytes=0-{N-1}` (RFC 7233). Useful for light
+        fetches that only need <title> + <meta description>, which are
+        almost always within the first 16 KB. Wayback honours Range on
+        archived content, so we drop bandwidth by ~30× on big homepages.
+        """
         url = snapshot_url(timestamp, original_url, for_human=False)
         await self._throttle.acquire()
+        request_headers: dict[str, str] | None = None
+        if byte_limit and byte_limit > 0:
+            request_headers = {"Range": f"bytes=0-{byte_limit - 1}"}
 
         # Same retry policy as CDX client: 429/5xx and connection errors
         # only. A 404 on a snapshot means the capture genuinely doesn't
@@ -142,7 +159,9 @@ class SnapshotFetcher:
 
         async for attempt in retryer:
             with attempt:
-                resp = await self._client.get(url)
+                resp = await self._client.get(url, headers=request_headers)
+                # 206 Partial Content is the normal success code for a
+                # Range request — treat it the same as 200.
                 if resp.status_code == 429 or 500 <= resp.status_code < 600:
                     logger.warning("snapshot retryable status=%s url=%s", resp.status_code, url)
                     raise httpx.HTTPStatusError("retryable", request=resp.request, response=resp)

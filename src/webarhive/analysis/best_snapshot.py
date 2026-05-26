@@ -276,11 +276,18 @@ async def best_snapshot_for_epoch(
         by_type: dict[str, list[int]] = {}  # type -> [total, archived]
         missing: list[str] = []
         archived_count = 0
-        for ru in res_sample:
+        # Availability checks run in parallel — the shared IAThrottle still
+        # paces them at the per-IP limit, but we no longer serialise the
+        # await per resource. Per-candidate time drops from N×interval to
+        # ~max(N×interval/throttle, network latency).
+        results = await asyncio.gather(*[
+            _check_resource(http, throttle, ru, row.timestamp)
+            for ru in res_sample
+        ])
+        for ru, ok in zip(res_sample, results):
             t = _classify_resource(ru)
             by_type.setdefault(t, [0, 0])
             by_type[t][0] += 1
-            ok = await _check_resource(http, throttle, ru, row.timestamp)
             if ok:
                 by_type[t][1] += 1
                 archived_count += 1

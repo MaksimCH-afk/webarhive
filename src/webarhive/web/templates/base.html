@@ -11,7 +11,6 @@
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="/static/css/app.css">
   <link rel="stylesheet" href="/static/css/themes.css">
-  <link rel="stylesheet" href="/static/css/themes-extra.css">
   <script>
     // Применяем сохранённую тему до отрисовки, чтобы не было вспышки.
     (function () {
@@ -67,22 +66,20 @@
   // Theme picker: 12 тем, переключение хранится в localStorage и применяется к body[data-theme].
   (function () {
     var THEMES = [
-      { id: "",         name: "оригинал",       sub: "светлый сине-серый", swatches: ["#dde3ee","#2358e0","#e3f5ec"] },
-      { id: "midnight", name: "графит",         sub: "тёмная IDE-like",     swatches: ["#0d1220","#8a7df9","#1a2238"] },
-      { id: "paper",    name: "сепия",          sub: "тёплая бумажная",      swatches: ["#ece4d3","#5b7a3d","#fbf7ef"] },
-      { id: "nord",     name: "nord",           sub: "холодный скандинавский",swatches: ["#e3e7ee","#5e81ac","#dfeadc"] },
-      { id: "solar",    name: "solarized",      sub: "кремовый тёплый",      swatches: ["#eee8d5","#268bd2","#fdf6e3"] },
-      { id: "mocha",    name: "mocha",          sub: "тёмная тёплая",        swatches: ["#11111b","#cba6f7","#1e1e2e"] },
-      { id: "slate",    name: "slate",          sub: "серо-бирюзовый",       swatches: ["#dde3e8","#00838f","#d8e9d9"] },
-      { id: "sand",     name: "sand",           sub: "песочный минимализм",  swatches: ["#e8e0d3","#c75d2e","#fbf6ec"] },
-      { id: "ocean",    name: "ocean",          sub: "тёмная морская",       swatches: ["#0c1820","#2ec4b6","#172a37"] },
-      { id: "linen",    name: "linen",          sub: "почти ч/б",            swatches: ["#efefef","#161616","#d8ecdf"] },
-      { id: "carbon",   name: "carbon",         sub: "IBM-стиль",            swatches: ["#161616","#4589ff","#262626"] },
-      { id: "rose",     name: "rose",           sub: "серо-розовый",         swatches: ["#ebe1e3","#8e3a4e","#fbf6f6"] },
-      { id: "forest",   name: "forest",         sub: "тёплый зелёный",       swatches: ["#dee5dc","#7a4f1e","#f7faf6"] }
+      { id: "",         name: "стандарт", sub: "светлый сине-серый",     swatches: ["#dde3ee","#2358e0","#e3f5ec"] },
+      { id: "linen",    name: "лён",      sub: "почти ч/б, мониторинг",  swatches: ["#efefef","#161616","#d8ecdf"] },
+      { id: "nord",     name: "nord",     sub: "холодный скандинавский", swatches: ["#e3e7ee","#5e81ac","#dfeadc"] },
+      { id: "slate",    name: "сланец",   sub: "серо-бирюзовый",         swatches: ["#dde3e8","#00838f","#d8e9d9"] },
+      { id: "ocean",    name: "океан",    sub: "тёмная морская",         swatches: ["#0c1820","#2ec4b6","#172a37"] }
     ];
     var saved = "";
     try { saved = localStorage.getItem("wa-theme") || ""; } catch (e) {}
+    // Если сохранена тема, которой больше нет в списке (после релиза с
+    // сокращением палитры) — сбрасываемся к стандарту.
+    if (saved && !THEMES.some(function (t) { return t.id === saved; })) {
+      saved = "";
+      try { localStorage.removeItem("wa-theme"); } catch (e) {}
+    }
     function apply(id) {
       if (id) document.body.setAttribute("data-theme", id);
       else document.body.removeAttribute("data-theme");

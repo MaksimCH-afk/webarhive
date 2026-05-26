@@ -156,6 +156,7 @@ class CdxClient:
         match_type: Literal["domain", "host"] = "domain",
         fields: tuple[str, ...] = DEFAULT_FIELDS,
         page_limit: int = PAGE_LIMIT,
+        filters: tuple[str, ...] = (),
     ) -> AsyncIterator[CdxRow]:
         """Stream CDX rows for a domain, paginating via resumeKey.
 
@@ -163,6 +164,14 @@ class CdxClient:
         per spec §3.1: combined they collapse "same URL with same content"
         within each urlkey group while still preserving distinct URLs.
         httpx serialises a list-of-tuples into a repeated query parameter.
+
+        `filters` — additional CDX server-side filters, e.g.
+        `("statuscode:200",)` to only get successful captures, or
+        `("statuscode:3..",)` for redirects. Server-side filtering cuts
+        wire payload significantly on large archives.
+
+        `gzip=true` is set unconditionally — CDX JSON for big domains is
+        1-2 MB raw, ~5-10× smaller compressed. httpx auto-decompresses.
         """
         # base params dict (single-valued), then append the two collapse
         # parameters separately so they appear twice in the query string.
@@ -175,7 +184,10 @@ class CdxClient:
             ("collapse", "digest"),
             ("limit", str(page_limit)),
             ("showResumeKey", "true"),
+            ("gzip", "true"),
         ]
+        for f in filters:
+            base_params.append(("filter", f))
         resume_key: str | None = None
         page_no = 0
 
@@ -222,5 +234,10 @@ class CdxClient:
         domain: str,
         *,
         match_type: Literal["domain", "host"] = "domain",
+        filters: tuple[str, ...] = (),
     ) -> list[CdxRow]:
-        return [r async for r in self.iter_captures(domain, match_type=match_type)]
+        return [
+            r async for r in self.iter_captures(
+                domain, match_type=match_type, filters=filters,
+            )
+        ]

@@ -40,14 +40,31 @@ def _cdx_handler_factory():
     def handler(request: httpx.Request) -> httpx.Response:
         url = str(request.url)
         if "cdx/search/cdx" in url:
-            # JSON: header + 3 rows
-            body = [
-                ["urlkey", "timestamp", "original", "mimetype", "statuscode", "digest", "length"],
+            header = ["urlkey", "timestamp", "original", "mimetype", "statuscode", "digest", "length"]
+            all_rows = [
                 ["com,foo)/", "20100101000000", "http://foo.com/", "text/html", "200", "AAA", "100"],
                 ["com,foo)/", "20120101000000", "http://foo.com/", "text/html", "200", "AAB", "100"],
                 ["com,foo)/", "20180101000000", "http://foo.com/", "text/html", "200", "CCC", "100"],
             ]
-            return httpx.Response(200, json=body)
+            # CDX server-side filter: process_domain now does parallel
+            # filtered queries per status bucket. Honour `filter=` so
+            # filter=statuscode:3.. returns nothing (no redirects).
+            filters = request.url.params.get_list("filter") if hasattr(
+                request.url.params, "get_list"
+            ) else [request.url.params.get("filter", "")]
+            rows = all_rows
+            for f in filters:
+                if not f:
+                    continue
+                if f.startswith("statuscode:"):
+                    spec = f.split(":", 1)[1]
+                    if spec == "200":
+                        rows = [r for r in rows if r[4] == "200"]
+                    elif spec == "3..":
+                        rows = [r for r in rows if r[4].startswith("3")]
+                    elif spec == "404":
+                        rows = [r for r in rows if r[4] == "404"]
+            return httpx.Response(200, json=[header] + rows)
         if "/web/20180101" in url:
             return httpx.Response(200, content=casino_html,
                                   headers={"content-type": "text/html; charset=utf-8"})

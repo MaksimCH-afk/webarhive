@@ -33,8 +33,8 @@ def _cdx_with_dup_digests():
     def handler(request: httpx.Request) -> httpx.Response:
         url = str(request.url)
         if "cdx/search/cdx" in url:
-            body = [
-                ["urlkey", "timestamp", "original", "mimetype", "statuscode", "digest", "length"],
+            header = ["urlkey", "timestamp", "original", "mimetype", "statuscode", "digest", "length"]
+            all_rows = [
                 # 3 URLs with the same pizza digest
                 ["com,foo)/", "20200101000000", "http://foo.com/", "text/html", "200", "PIZZA_DIGEST", "100"],
                 ["com,foo)/index.html", "20200102000000", "http://foo.com/index.html", "text/html", "200", "PIZZA_DIGEST", "100"],
@@ -43,7 +43,22 @@ def _cdx_with_dup_digests():
                 ["com,foo)/", "20230601000000", "http://foo.com/", "text/html", "200", "CASINO_DIGEST", "100"],
                 ["com,foo)/index.html", "20230602000000", "http://foo.com/index.html", "text/html", "200", "CASINO_DIGEST", "100"],
             ]
-            return httpx.Response(200, json=body)
+            filters = request.url.params.get_list("filter") if hasattr(
+                request.url.params, "get_list"
+            ) else [request.url.params.get("filter", "")]
+            rows = all_rows
+            for f in filters:
+                if not f:
+                    continue
+                if f.startswith("statuscode:"):
+                    spec = f.split(":", 1)[1]
+                    if spec == "200":
+                        rows = [r for r in rows if r[4] == "200"]
+                    elif spec == "3..":
+                        rows = [r for r in rows if r[4].startswith("3")]
+                    elif spec == "404":
+                        rows = [r for r in rows if r[4] == "404"]
+            return httpx.Response(200, json=[header] + rows)
         if "casino" in url.lower() or "/web/2023" in url:
             return httpx.Response(200, content=casino_html,
                                   headers={"content-type": "text/html"})
