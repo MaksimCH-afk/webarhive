@@ -260,6 +260,7 @@ _BOOL_FIELDS = {
     "check_subdomains",
     "whois_enabled",
     "enable_best_snapshot", "enable_best_snapshot_content_llm",
+    "cdx_cache_enabled",
 }
 _INT_FIELDS = {
     "max_llm_calls_per_domain", "text_limit", "title_shift_threshold",
@@ -269,6 +270,7 @@ _INT_FIELDS = {
     "best_snapshot_top_n", "best_snapshot_max_resources",
     "best_snapshot_per_epoch_timeout_sec",
     "llm_parallelism", "best_snapshot_epoch_parallelism",
+    "cdx_cache_ttl_hours",
 }
 _FLOAT_FIELDS = {
     "cost_budget_per_domain", "ia_rate_limit", "ia_backoff",

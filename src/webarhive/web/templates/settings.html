@@ -136,6 +136,22 @@
       </div>
     </section>
 
+    {#- CDX cache -#}
+    <section class="col gap-3">
+      <div class="section-title" style="margin:0">Cross-run CDX-кэш</div>
+      <label class="toggle {% if fields.cdx_cache_enabled %}toggle--on{% endif %}">
+        <input type="checkbox" name="cdx_cache_enabled" value="true" {% if fields.cdx_cache_enabled %}checked{% endif %} style="display:none" onchange="this.parentNode.classList.toggle('toggle--on', this.checked)">
+        <span class="toggle__box"></span><span>кэшировать CDX-результаты между прогонами</span>
+        {{ help_dot("На повторных прогонах того же домена в течение TTL фаза CDX = 0 секунд — переиспользуем сохранённый список захватов из таблицы cdx_cache. Полезно когда тестите настройки или перезапускаете обработку. Не влияет на свежие домены — для первого прогона всегда идёт реальный CDX-запрос.") }}
+      </label>
+      <div class="form-grid">
+        <div class="field">
+          <label class="field__lbl">cdx_cache_ttl_hours{{ help_dot("Сколько часов запись в cdx_cache считается свежей. Дефолт 24 — за сутки IA редко обновляет индекс на доменах, у которых не было новых захватов. Хотите всегда тянуть свежий — поставьте 0.") }}</label>
+          <input class="input" type="number" min="0" max="720" name="cdx_cache_ttl_hours" value="{{ fields.cdx_cache_ttl_hours }}">
+        </div>
+      </div>
+    </section>
+
     {#- Параллелизм + троттлинг -#}
     <section class="col gap-3">
       <div class="section-title" style="margin:0">Параллелизм и троттлинг IA</div>

@@ -26,6 +26,7 @@ _EDITABLE_FIELDS = {
     "concurrency", "ia_rate_limit", "ia_backoff", "ia_max_retries",
     "per_domain_timeout_sec", "llm_parallelism",
     "best_snapshot_epoch_parallelism",
+    "cdx_cache_enabled", "cdx_cache_ttl_hours",
     "check_subdomains",
     # WHOIS
     "whois_api_key", "whois_enabled", "whois_rate_limit",
@@ -94,6 +95,11 @@ class Settings(BaseSettings):
     # Жёсткий потолок времени на один домен. При превышении воркер
     # помечает домен ERROR и идёт дальше, не зависая на пуле.
     per_domain_timeout_sec: int = Field(default=1800, alias="PER_DOMAIN_TIMEOUT_SEC")
+    # Cross-run CDX-кэш. На повторных прогонах того же домена в течение
+    # TTL фаза CDX = 0с — оператор может тестить настройки или
+    # перезапускать обработку без повторного скана IA.
+    cdx_cache_enabled: bool = Field(default=True, alias="CDX_CACHE_ENABLED")
+    cdx_cache_ttl_hours: int = Field(default=24, alias="CDX_CACHE_TTL_HOURS")
     # Скользящее окно параллельных LLM-вызовов на ОДИН домен. Когда
     # точек сдвига много (40 классификаций), последовательный await
     # съедал ~4 минуты на домен. С окном 16 эта фаза падает до ~15-30с.
@@ -187,6 +193,10 @@ class Settings(BaseSettings):
             },
             "input": {
                 "check_subdomains": self.check_subdomains,
+            },
+            "cdx_cache": {
+                "enabled": self.cdx_cache_enabled,
+                "ttl_hours": self.cdx_cache_ttl_hours,
             },
             "whois": {
                 "enabled": self.whois_enabled,

@@ -165,6 +165,31 @@ class Epoch(Base):
     domain_ref: Mapped[Domain] = relationship(back_populates="epochs")
 
 
+class CdxCache(Base):
+    """Cross-run CDX result cache (spec extension §11).
+
+    Хранит сжатый JSON со списком CdxRow для пары (domain, match_type).
+    На повторных прогонах того же домена в течение TTL фаза CDX = 0с
+    (вместо 30-120с на больших архивах). Полезно когда оператор
+    тестит настройки или перезапускает обработку.
+
+    Запись хранит ТРИ filter-бакета сразу — `cdx_rows` это JSON
+    `{"200": [...], "3xx": [...], "404": [...]}`, где каждый список —
+    массив [urlkey, timestamp, original, mimetype, statuscode, digest, length].
+    """
+    __tablename__ = "cdx_cache"
+
+    # Композитный ключ (domain, match_type) — но SQLAlchemy primary_key=True
+    # на двух колонках работает корректно.
+    domain: Mapped[str] = mapped_column(String(255), primary_key=True)
+    match_type: Mapped[str] = mapped_column(String(16), primary_key=True)
+    rows_json: Mapped[dict[str, Any]] = mapped_column(JSON)
+    bucket_200: Mapped[int] = mapped_column(Integer, default=0)
+    bucket_3xx: Mapped[int] = mapped_column(Integer, default=0)
+    bucket_404: Mapped[int] = mapped_column(Integer, default=0)
+    fetched_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, index=True)
+
+
 class WhoisCache(Base):
     """Domain-level WHOIS cache (spec extension §11).
 

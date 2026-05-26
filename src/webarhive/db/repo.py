@@ -76,6 +76,64 @@ async def list_domains(session: AsyncSession, run_id: int) -> list[Domain]:
     return list(res.scalars())
 
 
+async def cdx_cache_get(
+    session: AsyncSession,
+    domain: str,
+    match_type: str,
+    ttl_hours: int,
+) -> tuple[dict[str, list[list[str]]], dict[str, int]] | None:
+    """Return (rows_by_bucket, bucket_counts) if cache has a fresh entry
+    for this (domain, match_type), else None.
+
+    rows_by_bucket is a dict {"200": [[..row..], ...], "3xx": [...], "404": [...]}
+    where each inner list is `[urlkey, timestamp, original, mimetype,
+    statuscode, digest, length]` — same as `CdxRow.from_list` expects.
+
+    Cache is "fresh" if fetched_at is within `ttl_hours`.
+    """
+    from webarhive.db.models import CdxCache
+    row = await session.get(CdxCache, (domain, match_type))
+    if row is None:
+        return None
+    age_hours = (datetime.utcnow() - row.fetched_at).total_seconds() / 3600.0
+    if age_hours > ttl_hours:
+        return None
+    counts = {
+        "200": row.bucket_200,
+        "3xx": row.bucket_3xx,
+        "404": row.bucket_404,
+    }
+    return (row.rows_json or {}, counts)
+
+
+async def cdx_cache_put(
+    session: AsyncSession,
+    domain: str,
+    match_type: str,
+    rows_by_bucket: dict[str, list[list[str]]],
+    bucket_counts: dict[str, int],
+) -> None:
+    """Upsert a CDX cache entry. SQLite-friendly. Composite key (domain, match_type)."""
+    from webarhive.db.models import CdxCache
+    row = await session.get(CdxCache, (domain, match_type))
+    if row is None:
+        session.add(CdxCache(
+            domain=domain,
+            match_type=match_type,
+            rows_json=rows_by_bucket,
+            bucket_200=bucket_counts.get("200", 0),
+            bucket_3xx=bucket_counts.get("3xx", 0),
+            bucket_404=bucket_counts.get("404", 0),
+            fetched_at=datetime.utcnow(),
+        ))
+    else:
+        row.rows_json = rows_by_bucket
+        row.bucket_200 = bucket_counts.get("200", 0)
+        row.bucket_3xx = bucket_counts.get("3xx", 0)
+        row.bucket_404 = bucket_counts.get("404", 0)
+        row.fetched_at = datetime.utcnow()
+
+
 async def whois_cache_get(
     session: AsyncSession, domain: str, ttl_days: int,
 ) -> tuple[datetime | None, str | None] | None:

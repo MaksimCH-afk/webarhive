@@ -116,19 +116,64 @@ async def process_domain(
 
     try:
         # --- CDX ---
-        # Тянем три бакета (200/3xx/404) параллельно с серверной
-        # фильтрацией: каждая CDX-страница возвращает только нужные
-        # статусы, что на больших архивах (20k+ строк) экономит ~40-60%
-        # трафика и парсинга. 5xx/other не анализируются и не качаются.
+        # Cross-run кэш: если за последние ttl_hours тот же домен уже
+        # сканировался, переиспользуем результат без обращения к IA.
+        # Полезно когда оператор тестит настройки / перезапускает прогон.
+        from webarhive.cdx.client import CdxRow
+        from webarhive.db.repo import cdx_cache_get, cdx_cache_put
+        cdx_cache_cfg = snapshot.get("cdx_cache", {}) or {}
+        cdx_cache_enabled = bool(cdx_cache_cfg.get("enabled", True))
+        cdx_cache_ttl_hours = int(cdx_cache_cfg.get("ttl_hours", 24))
+
         tracer.step("CDX", f"matchType={match_type}")
-        cdx_200, cdx_3xx, cdx_404 = await asyncio.gather(
-            cdx.fetch_all(domain_row.domain, match_type=match_type,
-                          filters=("statuscode:200",)),
-            cdx.fetch_all(domain_row.domain, match_type=match_type,
-                          filters=("statuscode:3..",)),
-            cdx.fetch_all(domain_row.domain, match_type=match_type,
-                          filters=("statuscode:404",)),
-        )
+        cached = None
+        if cdx_cache_enabled:
+            async with session_factory() as s:
+                cached = await cdx_cache_get(
+                    s, domain_row.domain, match_type, cdx_cache_ttl_hours,
+                )
+        if cached is not None:
+            rows_by_bucket, counts = cached
+            cdx_200 = [CdxRow.from_list(r) for r in rows_by_bucket.get("200", [])]
+            cdx_3xx = [CdxRow.from_list(r) for r in rows_by_bucket.get("3xx", [])]
+            cdx_404 = [CdxRow.from_list(r) for r in rows_by_bucket.get("404", [])]
+            tracer.info(
+                f"CDX-кэш HIT: {len(cdx_200)+len(cdx_3xx)+len(cdx_404)} "
+                f"строк из кэша (TTL {cdx_cache_ttl_hours}ч)"
+            )
+        else:
+            # Тянем три бакета (200/3xx/404) параллельно с серверной
+            # фильтрацией: каждая CDX-страница возвращает только нужные
+            # статусы, что на больших архивах (20k+ строк) экономит
+            # ~40-60% трафика и парсинга. 5xx/other не анализируются.
+            cdx_200, cdx_3xx, cdx_404 = await asyncio.gather(
+                cdx.fetch_all(domain_row.domain, match_type=match_type,
+                              filters=("statuscode:200",)),
+                cdx.fetch_all(domain_row.domain, match_type=match_type,
+                              filters=("statuscode:3..",)),
+                cdx.fetch_all(domain_row.domain, match_type=match_type,
+                              filters=("statuscode:404",)),
+            )
+            if cdx_cache_enabled:
+                # Сериализуем как массивы строк, идентично формату из
+                # CDX API — чтобы при чтении восстановить через
+                # CdxRow.from_list без дополнительной логики.
+                rows_by_bucket = {
+                    "200": [list(_cdx_to_list(r)) for r in cdx_200],
+                    "3xx": [list(_cdx_to_list(r)) for r in cdx_3xx],
+                    "404": [list(_cdx_to_list(r)) for r in cdx_404],
+                }
+                async with session_factory() as s:
+                    await cdx_cache_put(
+                        s, domain_row.domain, match_type,
+                        rows_by_bucket=rows_by_bucket,
+                        bucket_counts={
+                            "200": len(cdx_200),
+                            "3xx": len(cdx_3xx),
+                            "404": len(cdx_404),
+                        },
+                    )
+                    await s.commit()
         cdx_rows = cdx_200 + cdx_3xx + cdx_404
         # Sort by timestamp so downstream (history, gap detection) sees
         # the same chronological order as a single unfiltered fetch.
@@ -547,6 +592,14 @@ async def process_domain(
 def _safe_parse(ts: str):
     from webarhive.analysis.history import _parse_ts
     return _parse_ts(ts)
+
+
+def _cdx_to_list(r) -> tuple[str, str, str, str, str, str, str]:
+    """Serialize a CdxRow back to the 7-field list form used by CDX API,
+    so cdx_cache_put stores it in the exact format CdxRow.from_list reads
+    back later."""
+    return (r.urlkey, r.timestamp, r.original, r.mimetype,
+            r.statuscode, r.digest, r.length)
 
 
 async def start_run(
