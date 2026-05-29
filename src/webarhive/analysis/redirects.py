@@ -18,8 +18,10 @@ Comparison uses the registrable root via PSL (tldextract). Without PSL
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import re
+from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import datetime
 from urllib.parse import urljoin, urlsplit
@@ -204,7 +206,10 @@ async def analyze_redirects(
             )
 
     results: list[RedirectInfo] = []
-    BATCH = 25
+    # Прогресс каждые 10 — на cap=150 это 15 чекпойнтов вместо 6.
+    # Фаза часто занимает 3-5 минут на большом домене, оператору нужна
+    # более частая обратная связь чтобы видеть что не зависло.
+    BATCH = 10
     done = 0
     for row in rows_list:
         captured_at = _parse_ts(row.timestamp)
@@ -277,13 +282,20 @@ async def _fetch_target_topic_signal(
 
     signal: dict = {"domain": target_domain, "title": "", "description": "", "h1": ""}
     try:
-        rows = await cdx.fetch_all(target_domain, match_type="domain")
+        # Server-side filter — целевой домен может быть огромным (10k+
+        # захватов). Без фильтра тянем весь индекс ради двух строк ради
+        # одного fetch'а ближайшего 200. С фильтром payload в 2-3 раза
+        # меньше + не качаем 3xx/404/etc что нам не нужны.
+        rows = await cdx.fetch_all(
+            target_domain, match_type="domain", filters=("statuscode:200",),
+        )
     except Exception as exc:
         logger.warning("redirect target CDX failed for %s: %s", target_domain, exc)
         signal["error"] = f"CDX недоступен: {type(exc).__name__}"
         return signal
 
-    live = [r for r in rows if r.status_bucket == "200"]
+    # filters=statuscode:200 уже даёт нам только live-снимки.
+    live = rows
     if not live:
         signal["status"] = "цель мёртва в архиве"
         return signal
@@ -316,6 +328,7 @@ async def llm_refine_redirects(
     fetcher: SnapshotFetcher,
     cdx=None,
     review_cap: int = 30,
+    llm_parallelism: int = 16,
     progress=None,
 ) -> list[RedirectInfo]:
     """Spec §9.3 — only on REVIEW-class borderline cases. Asks the model
@@ -326,6 +339,11 @@ async def llm_refine_redirects(
     реально обогащаем (CDX + LLM). Сверх потолка остальные REVIEW
     оставляем как есть. На доменах с тысячами 3xx этот пайплайн без
     cap'а уходит в часы.
+
+    `llm_parallelism` — скользящее окно параллельных вызовов. Раньше
+    эта фаза шла последовательно и на 20-30 REVIEW занимала 15-25
+    минут с CDX-обогащением цели (полный скан + light fetch + LLM
+    на каждый, всё await). Теперь — ~30-60 секунд.
 
     If a `cdx` client is supplied, we fetch the target domain's nearest
     200-snapshot title/desc/h1 so the model actually sees topic on both
@@ -345,51 +363,79 @@ async def llm_refine_redirects(
                 f"остаюсь на тематике (domain+url)"
             )
 
-    out: list[RedirectInfo] = []
-    processed = 0
+    # Собираем индексы REVIEW-редиректов, реально подлежащих обработке.
+    review_indices: list[int] = []
     skipped_over_cap = 0
-    for r in redirects:
+    for i, r in enumerate(redirects):
         if r.classification is not RedirectClass.REVIEW or not r.to_url:
-            out.append(r)
             continue
-        if processed >= review_cap:
-            # Остальные REVIEW оставляем без LLM-уточнения.
-            out.append(r)
-            skipped_over_cap += 1
-            continue
-        target_topic: dict
-        if use_cdx is not None and r.target_domain:
-            target_topic = await _fetch_target_topic_signal(
-                target_domain=r.target_domain,
-                near_timestamp=r.captured_at,
-                cdx=use_cdx,
-                fetcher=fetcher,
-            )
+        if len(review_indices) < review_cap:
+            review_indices.append(i)
         else:
-            target_topic = {"domain": r.target_domain, "url": r.to_url}
-        sys_p, usr_p = build_redirect_prompt(from_topic=source_topic, to_topic=target_topic)
-        resp = await llm.chat_json(model=model, system_prompt=sys_p, user_prompt=usr_p)
-        parsed = resp.parsed or {}
-        relation = str(parsed.get("relation", "")).lower()
-        mapping = {
-            "тот_же_сайт": RedirectClass.SAME_SITE,
-            "переезд_компании": RedirectClass.COMPANY_MOVE,
-            # `перехват` → keep REVIEW
-        }
-        new_cls = mapping.get(relation, RedirectClass.REVIEW)
-        new_reason = parsed.get("reason") if isinstance(parsed.get("reason"), str) else r.reason
-        out.append(RedirectInfo(
-            captured_at=r.captured_at,
-            from_url=r.from_url,
-            to_url=r.to_url,
-            target_domain=r.target_domain,
-            classification=new_cls,
-            reason=f"LLM: {new_reason}" if new_reason else r.reason,
-            snapshot_url=r.snapshot_url,
-        ))
-        processed += 1
-        if progress is not None and processed % 10 == 0:
-            await progress(f"LLM-редиректы: {processed}/{min(review_count, review_cap)}")
+            skipped_over_cap += 1
+
+    if progress is not None:
+        await progress(
+            f"LLM-refine редиректов: начинаю обработку "
+            f"{len(review_indices)} REVIEW (параллелизм={llm_parallelism}"
+            + (", CDX-обогащение цели вкл" if use_cdx is not None else "")
+            + ")"
+        )
+
+    refined: dict[int, RedirectInfo] = {}
+    sem = asyncio.Semaphore(max(1, int(llm_parallelism)))
+    completed = 0
+    completed_lock = asyncio.Lock()
+
+    async def _refine_one(idx: int) -> None:
+        nonlocal completed
+        async with sem:
+            r = redirects[idx]
+            target_topic: dict
+            if use_cdx is not None and r.target_domain:
+                target_topic = await _fetch_target_topic_signal(
+                    target_domain=r.target_domain,
+                    near_timestamp=r.captured_at,
+                    cdx=use_cdx,
+                    fetcher=fetcher,
+                )
+            else:
+                target_topic = {"domain": r.target_domain, "url": r.to_url}
+            sys_p, usr_p = build_redirect_prompt(from_topic=source_topic, to_topic=target_topic)
+            resp = await llm.chat_json(model=model, system_prompt=sys_p, user_prompt=usr_p)
+            parsed = resp.parsed or {}
+            relation = str(parsed.get("relation", "")).lower()
+            mapping = {
+                "тот_же_сайт": RedirectClass.SAME_SITE,
+                "переезд_компании": RedirectClass.COMPANY_MOVE,
+                # `перехват` → keep REVIEW
+            }
+            new_cls = mapping.get(relation, RedirectClass.REVIEW)
+            new_reason = parsed.get("reason") if isinstance(parsed.get("reason"), str) else r.reason
+            refined[idx] = RedirectInfo(
+                captured_at=r.captured_at,
+                from_url=r.from_url,
+                to_url=r.to_url,
+                target_domain=r.target_domain,
+                classification=new_cls,
+                reason=f"LLM: {new_reason}" if new_reason else r.reason,
+                snapshot_url=r.snapshot_url,
+            )
+            async with completed_lock:
+                completed += 1
+                # Прогресс каждые 5 — на cap=30 это 6 чекпойнтов
+                if progress is not None and completed % 5 == 0:
+                    await progress(
+                        f"LLM-редиректы: {completed}/{len(review_indices)}"
+                    )
+
+    await asyncio.gather(*(_refine_one(i) for i in review_indices))
+
+    # Сборка выходного списка с сохранением исходного порядка.
+    out: list[RedirectInfo] = []
+    for i, r in enumerate(redirects):
+        out.append(refined.get(i, r))
+
     if progress is not None and skipped_over_cap:
         await progress(
             f"LLM-редиректы: {skipped_over_cap} оставлены REVIEW без LLM "

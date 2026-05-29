@@ -314,6 +314,7 @@ async def process_domain(
                     fetcher=fetcher,
                     cdx=cdx,
                     review_cap=review_cap,
+                    llm_parallelism=int(limits.get("llm_parallelism", 16)),
                     progress=_redir_progress,
                 )
                 tracer.info("LLM-уточнение редиректов выполнено")
@@ -329,12 +330,20 @@ async def process_domain(
         if gaps:
             tracer.info(f"дропы: разрывов {len(gaps)}, оценено {sum(1 for d in drop_signals if d.is_drop)}")
         if roles.get("smart_drop") and llm is not None and drop_signals:
+            async def _drop_progress(msg: str) -> None:
+                tracer.info(msg)
             drop_signals = await smart_drop_assess(
-                drop_signals, llm=llm, model=models["smart_drop"],
+                drop_signals,
+                llm=llm,
+                model=models["smart_drop"],
+                llm_parallelism=int(limits.get("llm_parallelism", 16)),
+                progress=_drop_progress,
             )
             tracer.info("LLM-оценка дропов выполнена")
 
         # --- Verdict ---
+        if roles.get("verdict") and llm is not None:
+            tracer.info("verdict: начинаю финальный анализ")
         verdict_result = await make_verdict(
             enabled=bool(roles.get("verdict")) and llm is not None,
             domain=domain_row.domain,

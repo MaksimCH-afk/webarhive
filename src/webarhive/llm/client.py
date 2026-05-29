@@ -89,6 +89,7 @@ class OpenRouterClient:
         timeout: float = 60.0,
         max_retries: int = 3,
         backoff_base: float = 2.0,
+        per_call_timeout: float = 45.0,
     ) -> None:
         if not api_key:
             raise ValueError("OPENROUTER_API_KEY is required")
@@ -98,6 +99,11 @@ class OpenRouterClient:
         self._owns_client = client is None
         self._max_retries = max_retries
         self._backoff_base = backoff_base
+        # Wall-clock cap на ОДИН вызов chat_json (включая retry). Раньше
+        # зависший вызов мог съесть до 3×60с tenacity-backoff. Теперь
+        # выходим с error по истечении этого таймаута и пайплайн идёт
+        # дальше — один сбойный вызов больше не блокирует фазу.
+        self._per_call_timeout = per_call_timeout
 
     async def aclose(self) -> None:
         if self._owns_client:
@@ -148,7 +154,7 @@ class OpenRouterClient:
             reraise=True,
         )
 
-        try:
+        async def _do_call() -> dict:
             async for attempt in retryer:
                 with attempt:
                     resp = await self._client.post(OPENROUTER_URL, json=payload, headers=headers)
@@ -156,8 +162,13 @@ class OpenRouterClient:
                         logger.warning("openrouter retryable status=%s", resp.status_code)
                         raise httpx.HTTPStatusError("retryable", request=resp.request, response=resp)
                     resp.raise_for_status()
-                    data = resp.json()
-                    break
+                    return resp.json()
+            raise RuntimeError("unreachable")  # pragma: no cover
+
+        try:
+            # Жёсткий wall-clock потолок на ВСЁ retry-окно, чтобы один
+            # сбойный вызов не съел до 3×60с tenacity backoff.
+            data = await asyncio.wait_for(_do_call(), timeout=self._per_call_timeout)
         except Exception as exc:
             elapsed_ms = int((time.monotonic() - start) * 1000)
             logger.exception("openrouter call failed")

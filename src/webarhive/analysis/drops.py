@@ -16,6 +16,7 @@ Layer separation:
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import datetime
@@ -145,35 +146,60 @@ async def smart_drop_assess(
     *,
     llm: OpenRouterClient,
     model: str,
+    llm_parallelism: int = 16,
+    progress=None,
 ) -> list[DropSignal]:
     """Spec §9.2 — only runs on already-suspicious gaps (is_drop=True
     OR category change unverifiable). Asks the model to confirm/deny
     based on the topics on both sides; replaces source="heuristic" with
     "llm" and updates confidence/reason. No-op on gaps that look
-    clearly not-a-drop."""
-    out: list[DropSignal] = []
-    for s in signals:
-        if not s.is_drop and (s.category_before == s.category_after):
-            out.append(s)
-            continue
-        sys_p, usr_p = build_smart_drop_prompt(
-            before={"category": s.category_before},
-            after={"category": s.category_after},
-            gap_days=s.gap_days,
+    clearly not-a-drop.
+
+    Параллелизуется тем же семафором что и topic-классификация. Раньше
+    шёл sequentially — на доменах с 5-10 подозрительными разрывами
+    добавлял 30-60с пустого ожидания между фазами.
+    """
+    # Заранее отделяем «доверяемые без LLM» (пройдут как есть) от
+    # «подозрительных» (нужен LLM).
+    needs_llm: list[int] = []
+    for i, s in enumerate(signals):
+        if s.is_drop or s.category_before != s.category_after:
+            needs_llm.append(i)
+
+    if progress is not None and needs_llm:
+        await progress(
+            f"smart_drop: начинаю {len(needs_llm)} подозрительных "
+            f"разрывов через LLM (параллелизм={llm_parallelism})"
         )
-        resp = await llm.chat_json(model=model, system_prompt=sys_p, user_prompt=usr_p)
-        parsed = resp.parsed or {}
-        is_drop = bool(parsed.get("is_drop", s.is_drop))
-        conf = parsed.get("confidence")
-        try:
-            conf_f = float(conf) if conf is not None else s.confidence
-        except (TypeError, ValueError):
-            conf_f = s.confidence
-        reason = parsed.get("reason") if isinstance(parsed.get("reason"), str) else s.reason
-        out.append(DropSignal(
-            gap_from=s.gap_from, gap_to=s.gap_to, gap_days=s.gap_days,
-            category_before=s.category_before, category_after=s.category_after,
-            is_drop=is_drop, confidence=conf_f, reason=reason or s.reason,
-            source="llm",
-        ))
-    return out
+
+    refined: dict[int, DropSignal] = {}
+    sem = asyncio.Semaphore(max(1, int(llm_parallelism)))
+
+    async def _assess_one(idx: int) -> None:
+        s = signals[idx]
+        async with sem:
+            sys_p, usr_p = build_smart_drop_prompt(
+                before={"category": s.category_before},
+                after={"category": s.category_after},
+                gap_days=s.gap_days,
+            )
+            resp = await llm.chat_json(model=model, system_prompt=sys_p, user_prompt=usr_p)
+            parsed = resp.parsed or {}
+            is_drop = bool(parsed.get("is_drop", s.is_drop))
+            conf = parsed.get("confidence")
+            try:
+                conf_f = float(conf) if conf is not None else s.confidence
+            except (TypeError, ValueError):
+                conf_f = s.confidence
+            reason = parsed.get("reason") if isinstance(parsed.get("reason"), str) else s.reason
+            refined[idx] = DropSignal(
+                gap_from=s.gap_from, gap_to=s.gap_to, gap_days=s.gap_days,
+                category_before=s.category_before, category_after=s.category_after,
+                is_drop=is_drop, confidence=conf_f, reason=reason or s.reason,
+                source="llm",
+            )
+
+    await asyncio.gather(*(_assess_one(i) for i in needs_llm))
+
+    # Восстанавливаем порядок: индексы которых нет в refined остаются как были.
+    return [refined.get(i, s) for i, s in enumerate(signals)]
