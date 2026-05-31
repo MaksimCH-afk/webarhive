@@ -113,7 +113,11 @@ class Settings(BaseSettings):
 
     # Concurrency & throttling — IA is the bottleneck, single shared gate
     concurrency: int = Field(default=4, alias="CONCURRENCY")
-    ia_rate_limit: float = Field(default=4.0, alias="IA_RATE_LIMIT")  # req/sec
+    # Поднято с 4 до 8 — IA обычно держит до 10-15 req/s до 429-троттлинга.
+    # 8 req/s × concurrency=4 = 2 req/s effective на домен в пике, что
+    # ускоряет фазу редиректов и best-snap в 2 раза при тех же гарантиях.
+    # Если IA начнёт банить — снизьте обратно через /settings.
+    ia_rate_limit: float = Field(default=8.0, alias="IA_RATE_LIMIT")  # req/sec
     ia_backoff: float = Field(default=2.0, alias="IA_BACKOFF")  # base seconds
     ia_max_retries: int = Field(default=5, alias="IA_MAX_RETRIES")
 

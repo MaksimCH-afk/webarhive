@@ -147,9 +147,23 @@ async def process_domain(
                 )
         if cached is not None:
             rows_by_bucket, counts = cached
-            cdx_200 = [CdxRow.from_list(r) for r in rows_by_bucket.get("200", [])]
-            cdx_3xx = [CdxRow.from_list(r) for r in rows_by_bucket.get("3xx", [])]
-            cdx_404 = [CdxRow.from_list(r) for r in rows_by_bucket.get("404", [])]
+            # Defensive: старые записи кэша (до фикса header-row) могут
+            # содержать строку-заголовок CDX в виде "строки". Отсеиваем
+            # любую строку с нечисловым timestamp / литералом "urlkey".
+            def _filter_cache_rows(rows: list[list[str]]) -> list[list[str]]:
+                clean: list[list[str]] = []
+                for r in rows:
+                    if not r or len(r) < 2:
+                        continue
+                    if r[0] == "urlkey" or r[1] == "timestamp":
+                        continue
+                    if not (r[1] and r[1][:8].isdigit()):
+                        continue
+                    clean.append(r)
+                return clean
+            cdx_200 = [CdxRow.from_list(r) for r in _filter_cache_rows(rows_by_bucket.get("200", []))]
+            cdx_3xx = [CdxRow.from_list(r) for r in _filter_cache_rows(rows_by_bucket.get("3xx", []))]
+            cdx_404 = [CdxRow.from_list(r) for r in _filter_cache_rows(rows_by_bucket.get("404", []))]
             tracer.info(
                 f"CDX-кэш HIT: {len(cdx_200)+len(cdx_3xx)+len(cdx_404)} "
                 f"строк из кэша (TTL {cdx_cache_ttl_hours}ч)"
@@ -238,7 +252,33 @@ async def process_domain(
 
         # --- Topics (only on 200 rows, chronologically sorted) ---
         if deduped_live and llm is not None:
-            sorted_live = sorted(deduped_live, key=lambda r: r.timestamp)
+            # Раньше брали ВСЕ 200-захваты домена: на блогах в архиве это
+            # тысячи URL (блог-посты, RSS, JSON-API wordpress, страницы
+            # тегов) — и сэмпл 120 из них почти не попадал на главную.
+            # Отсюда «Пусто»/«Не определено» в большинстве эпох.
+            # Теперь приоритет — главная страница (`/`, `/index.html`).
+            # Только если её захватов слишком мало (порог 5), откатываемся
+            # на всю выборку — у некоторых доменов главная не сохранена.
+            from webarhive.analysis.best_snapshot import _is_home_page
+            HOME_MIN = 5
+            home_only = [
+                r for r in deduped_live
+                if _is_home_page(r.original, domain_row.domain)
+            ]
+            if len(home_only) >= HOME_MIN:
+                sorted_live = sorted(home_only, key=lambda r: r.timestamp)
+                tracer.info(
+                    f"тематика: фильтр главной страницы — {len(home_only)} из "
+                    f"{len(deduped_live)} версий (остальные URL — посты/feed/"
+                    f"служебные — не репрезентируют тематику домена)"
+                )
+            else:
+                sorted_live = sorted(deduped_live, key=lambda r: r.timestamp)
+                if home_only:
+                    tracer.info(
+                        f"тематика: главная содержит лишь {len(home_only)} "
+                        f"версий (<{HOME_MIN}) — fallback на все {len(deduped_live)} 200-снимков"
+                    )
             tracer.step("ТЕМАТИКА", f"{len(sorted_live)} версий со статусом 200")
 
             audit_run_id = run_id
