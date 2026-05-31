@@ -173,9 +173,12 @@ async def process_domain(
             # фильтрацией: каждая CDX-страница возвращает только нужные
             # статусы, что на больших архивах (20k+ строк) экономит
             # ~40-60% трафика и парсинга. 5xx/other не анализируются.
+            # 200-бакет дополнительно ограничен mimetype:text/html —
+            # тематику строим только из HTML главной, поэтому feed/
+            # wp-json/CSS/JSON-API не нужны и не должны раздувать payload.
             cdx_200, cdx_3xx, cdx_404 = await asyncio.gather(
                 cdx.fetch_all(domain_row.domain, match_type=match_type,
-                              filters=("statuscode:200",)),
+                              filters=("statuscode:200", "mimetype:text/html")),
                 cdx.fetch_all(domain_row.domain, match_type=match_type,
                               filters=("statuscode:3..",)),
                 cdx.fetch_all(domain_row.domain, match_type=match_type,
@@ -250,36 +253,29 @@ async def process_domain(
             final_status = DomainStatus.NO_DATA
             tracer.warn("домена нет в архиве — нет данных для анализа")
 
-        # --- Topics (only on 200 rows, chronologically sorted) ---
-        if deduped_live and llm is not None:
-            # Раньше брали ВСЕ 200-захваты домена: на блогах в архиве это
-            # тысячи URL (блог-посты, RSS, JSON-API wordpress, страницы
-            # тегов) — и сэмпл 120 из них почти не попадал на главную.
-            # Отсюда «Пусто»/«Не определено» в большинстве эпох.
-            # Теперь приоритет — главная страница (`/`, `/index.html`).
-            # Только если её захватов слишком мало (порог 5), откатываемся
-            # на всю выборку — у некоторых доменов главная не сохранена.
-            from webarhive.analysis.best_snapshot import _is_home_page
-            HOME_MIN = 5
-            home_only = [
-                r for r in deduped_live
-                if _is_home_page(r.original, domain_row.domain)
-            ]
-            if len(home_only) >= HOME_MIN:
-                sorted_live = sorted(home_only, key=lambda r: r.timestamp)
-                tracer.info(
-                    f"тематика: фильтр главной страницы — {len(home_only)} из "
-                    f"{len(deduped_live)} версий (остальные URL — посты/feed/"
-                    f"служебные — не репрезентируют тематику домена)"
-                )
-            else:
-                sorted_live = sorted(deduped_live, key=lambda r: r.timestamp)
-                if home_only:
-                    tracer.info(
-                        f"тематика: главная содержит лишь {len(home_only)} "
-                        f"версий (<{HOME_MIN}) — fallback на все {len(deduped_live)} 200-снимков"
-                    )
-            tracer.step("ТЕМАТИКА", f"{len(sorted_live)} версий со статусом 200")
+        # --- Topics: СТРОГО только главная страница ---
+        # Анализируем тематику ТОЛЬКО по захватам главной (`/`,
+        # `/index.html`). Внутренние URL (посты, теги, архивы,
+        # wp-json, feeds) не репрезентируют «что это за домен» —
+        # это разнотемные единицы внутри одного бренда. Раньше из
+        # 17k версий 97% были не-главной → отсюда сплошные
+        # «Пусто»/«Не определено».
+        # Никакого fallback: если главная не сохранена, тематика
+        # не классифицируется, домен помечается partial. Редиректы,
+        # дропы и вердикт по флагам всё равно посчитаются.
+        from webarhive.analysis.best_snapshot import _is_home_page
+        home_only = [
+            r for r in deduped_live
+            if (r.mimetype or "").lower().startswith("text/html")
+            and _is_home_page(r.original, domain_row.domain)
+        ]
+        if home_only and llm is not None:
+            sorted_live = sorted(home_only, key=lambda r: r.timestamp)
+            tracer.step(
+                "ТЕМАТИКА",
+                f"{len(sorted_live)} захватов главной "
+                f"(из {len(deduped_live)} 200-снимков — остальные не главная)",
+            )
 
             audit_run_id = run_id
             audit_domain_id = domain_row.id
@@ -327,8 +323,18 @@ async def process_domain(
                 shift_points=len([v for v in topic_result.versions if v.classified]),
                 llm_budget=limits["max_llm_calls_per_domain"],
             )
-        elif deduped_live and llm is None:
+        elif home_only and llm is None:
             tracer.warn("LLM-клиент не подключён — тематика не классифицирована")
+        elif deduped_live:
+            # 200-захваты есть, но ни одного home-page → не можем
+            # классифицировать. Помечаем partial, продолжаем редиректы/
+            # дропы/вердикт по флагам.
+            tracer.warn(
+                f"тематика: главная страница не сохранена в архиве "
+                f"({len(deduped_live)} 200-снимков, ни одного home-page) — "
+                f"тематика пропущена, домен будет partial"
+            )
+            topic_partial = True
 
         # --- Redirects ---
         if history.redirect_rows:
