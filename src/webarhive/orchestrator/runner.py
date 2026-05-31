@@ -113,6 +113,19 @@ async def process_domain(
     error_message: str | None = None
     verdict_for_counter: Verdict | None = None
     topic_partial = False
+    # Промежуточные результаты фаз — инициализируем заранее, чтобы в
+    # except-блоке можно было записать в DB то, что успели посчитать
+    # до сбоя. Без этого ошибка где-то в середине (LLM-refine,
+    # smart_drop, …) оставляла домен с пустыми полями: 0 захватов,
+    # без эпох, без редиректов.
+    history = None
+    deduped_live: list = []
+    topic_result = TopicResult()
+    redirects: list[RedirectInfo] = []
+    drop_signals: list = []
+    epoch_best: dict[int, "object"] = {}
+    whois_reg_date = None
+    whois_status_str: str | None = None
 
     try:
         # --- CDX ---
@@ -224,7 +237,6 @@ async def process_domain(
             tracer.warn("домена нет в архиве — нет данных для анализа")
 
         # --- Topics (only on 200 rows, chronologically sorted) ---
-        topic_result = TopicResult()
         if deduped_live and llm is not None:
             sorted_live = sorted(deduped_live, key=lambda r: r.timestamp)
             tracer.step("ТЕМАТИКА", f"{len(sorted_live)} версий со статусом 200")
@@ -279,7 +291,6 @@ async def process_domain(
             tracer.warn("LLM-клиент не подключён — тематика не классифицирована")
 
         # --- Redirects ---
-        redirects: list[RedirectInfo] = []
         if history.redirect_rows:
             tracer.step("РЕДИРЕКТЫ", f"{len(history.redirect_rows)} 3xx-снапшотов")
             t0 = datetime.utcnow()
@@ -374,8 +385,6 @@ async def process_domain(
         verdict_for_counter = verdict_result.verdict
 
         # --- WHOIS: реальная дата регистрации (если включено) ---
-        whois_reg_date = None
-        whois_status_str = None
         whois_cfg = snapshot.get("whois", {}) or {}
         if whois_cfg.get("enabled") and whois_client is not None:
             from webarhive.db.repo import whois_cache_get, whois_cache_put
@@ -410,7 +419,6 @@ async def process_domain(
                     tracer.warn(f"WHOIS: {r.status} — {r.error or ''}{rem_part}")
 
         # --- Best snapshot (если включено) ---
-        epoch_best: dict[int, "object"] = {}
         bs_cfg = snapshot.get("best_snapshot", {}) or {}
         if bs_cfg.get("enabled") and topic_result.epochs:
             from webarhive.analysis.best_snapshot import (
@@ -586,6 +594,55 @@ async def process_domain(
             d = await s.get(Domain, domain_row.id)
             if d is not None:
                 d.trace = tracer.text()
+                # Сохраняем всё что успели посчитать ДО исключения, чтобы
+                # карточка ERROR-домена не была пустой. Все поля могут быть
+                # None если ошибка вылетела до их вычисления — тогда они
+                # просто не перезаписываются.
+                if history is not None:
+                    d.first_capture_at = history.first_capture_at
+                    d.last_capture_at = history.last_capture_at
+                    d.age_days = history.age_days
+                    d.total_captures = history.total_captures
+                    d.total_versions = (
+                        len(deduped_live) + len(history.redirect_rows)
+                    )
+                if whois_status_str is not None and d.whois_status is None:
+                    d.whois_registration_date = whois_reg_date
+                    d.whois_status = whois_status_str
+                    d.whois_fetched_at = datetime.utcnow()
+                # Эпохи / редиректы пишем только если их там ещё нет (на
+                # success-пути они уже добавлены в основной persist-блок).
+                from sqlalchemy import select as _select
+                existing_epochs = (
+                    await s.execute(_select(Epoch).where(Epoch.domain_id == d.id))
+                ).scalars().first()
+                if existing_epochs is None and topic_result.epochs:
+                    for ep in topic_result.epochs:
+                        s.add(Epoch(
+                            domain_id=d.id,
+                            period_from=ep.period_from,
+                            period_to=ep.period_to,
+                            category=ep.category,
+                            confidence=ep.confidence,
+                            reason=ep.reason,
+                            sample_snapshot_url=ep.sample_snapshot_url,
+                            versions_in_epoch=ep.versions_in_epoch,
+                        ))
+                existing_redirects = (
+                    await s.execute(_select(Redirect).where(Redirect.domain_id == d.id))
+                ).scalars().first()
+                if existing_redirects is None and redirects:
+                    for r in redirects:
+                        s.add(Redirect(
+                            domain_id=d.id,
+                            captured_at=r.captured_at,
+                            from_url=r.from_url,
+                            to_url=r.to_url,
+                            target_domain=r.target_domain,
+                            classification=r.classification.value,
+                            reason=r.reason,
+                            snapshot_url=r.snapshot_url,
+                        ))
                 if final_status is DomainStatus.ERROR:
                     d.status = DomainStatus.ERROR.value
                     d.error_message = error_message

@@ -56,7 +56,12 @@
         <div class="row gap-3">
           <div style="font-size:18px;font-weight:600;color:{{ tone_fg }};letter-spacing:-0.01em">{{ tone_label }}</div>
           {% if not has_verdict and domain.status not in ('error','no_data') %}
-            <span class="muted" style="font-size:12px">· LLM-вердикт выключен — ориентируйтесь на флаги</span>
+            {%- set verdict_was_enabled = run.settings_snapshot and run.settings_snapshot.get('roles',{}).get('verdict') -%}
+            {% if verdict_was_enabled %}
+              <span class="muted" style="font-size:12px">· LLM-вердикт не получен (модель не дала валидный ответ) — ориентируйтесь на флаги</span>
+            {% else %}
+              <span class="muted" style="font-size:12px">· LLM-вердикт выключен — ориентируйтесь на флаги</span>
+            {% endif %}
           {% endif %}
         </div>
         <div style="font-size:13.5px;color:var(--text);max-width:760px">{{ domain.verdict_reason or domain.error_message or 'Обоснование не сформулировано.' }}</div>

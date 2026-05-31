@@ -294,8 +294,10 @@ async def _fetch_target_topic_signal(
         signal["error"] = f"CDX недоступен: {type(exc).__name__}"
         return signal
 
-    # filters=statuscode:200 уже даёт нам только live-снимки.
-    live = rows
+    # filters=statuscode:200 уже даёт нам только live-снимки. Отсеиваем
+    # строки с нечисловым timestamp (вдруг затесалась header-row из CDX),
+    # чтобы дальше не упасть на int(ts) при поиске ближайшей даты.
+    live = [r for r in rows if r.timestamp and r.timestamp[:8].isdigit()]
     if not live:
         signal["status"] = "цель мёртва в архиве"
         return signal

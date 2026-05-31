@@ -221,6 +221,17 @@ class CdxClient:
 
             for row in cleaned:
                 try:
+                    # Defensive: иногда (особенно при filter=... + gzip)
+                    # CDX отдаёт строку-заголовок не только на первой
+                    # странице. Распознаём её по литеральным именам полей
+                    # ("urlkey","timestamp",...) и пропускаем — иначе
+                    # downstream-парсеры падают на int(timestamp).
+                    if (
+                        len(row) >= 2
+                        and row[0] == "urlkey"
+                        and row[1] == "timestamp"
+                    ):
+                        continue
                     yield CdxRow.from_list(row)
                 except (IndexError, TypeError):
                     logger.debug("malformed CDX row skipped: %r", row)
