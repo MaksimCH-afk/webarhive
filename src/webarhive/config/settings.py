@@ -34,6 +34,7 @@ _EDITABLE_FIELDS = {
     # Best snapshot
     "enable_best_snapshot", "best_snapshot_top_n",
     "best_snapshot_max_resources", "best_snapshot_per_epoch_timeout_sec",
+    "best_snapshot_min_epoch_days", "best_snapshot_max_epochs",
     "enable_best_snapshot_content_llm",
 }
 
@@ -146,6 +147,14 @@ class Settings(BaseSettings):
     # Жёсткий потолок времени на одну эпоху best-snapshot. При превышении
     # эпоха пропускается — не блокирует остальные.
     best_snapshot_per_epoch_timeout_sec: int = Field(default=90, alias="BEST_SNAPSHOT_PER_EPOCH_TIMEOUT_SEC")
+    # Минимальная длительность эпохи (в днях), чтобы для неё искать
+    # best-snapshot. У блогов title главной меняется с каждым постом →
+    # генерирует 30+ микро-эпох по 1-2 недели; искать «лучший слепок»
+    # для них нет смысла, только тратим IA-троттл. По умолчанию 30 дней.
+    best_snapshot_min_epoch_days: int = Field(default=30, alias="BEST_SNAPSHOT_MIN_EPOCH_DAYS")
+    # Если эпох всё равно много (например после фильтра по длительности),
+    # обрабатываем топ-N самых длинных. Защита от 25-минутных фаз.
+    best_snapshot_max_epochs: int = Field(default=10, alias="BEST_SNAPSHOT_MAX_EPOCHS")
     enable_best_snapshot_content_llm: bool = Field(default=False, alias="ENABLE_BEST_SNAPSHOT_CONTENT_LLM")
 
     # App / deployment
@@ -214,6 +223,8 @@ class Settings(BaseSettings):
                 "max_resources_per_candidate": self.best_snapshot_max_resources,
                 "per_epoch_timeout_sec": self.best_snapshot_per_epoch_timeout_sec,
                 "epoch_parallelism": self.best_snapshot_epoch_parallelism,
+                "min_epoch_days": self.best_snapshot_min_epoch_days,
+                "max_epochs": self.best_snapshot_max_epochs,
                 "content_llm": self.enable_best_snapshot_content_llm,
             },
         }

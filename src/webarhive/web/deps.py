@@ -14,6 +14,11 @@ from webarhive.config.categories import (
 )
 from webarhive.db.engine import get_session
 
+# Версия деплоя — увеличиваем при каждой правке кода. Шапка показывает
+# это значение справа от «настройки» — чтобы оператор видел, что
+# именно крутится в Docker'е, и не путался при пересборках.
+APP_VERSION = "2.0"
+
 
 def templates_for(directory: Path) -> Jinja2Templates:
     t = Jinja2Templates(directory=str(directory))
@@ -24,6 +29,7 @@ def templates_for(directory: Path) -> Jinja2Templates:
     t.env.filters["category_icon"] = lambda key: (CATEGORY_BY_KEY.get(key).icon if key in CATEGORY_BY_KEY else "help-circle")
     t.env.filters["category_label"] = lambda key: (CATEGORY_BY_KEY.get(key).label_ru if key in CATEGORY_BY_KEY else key)
     t.env.filters["category_group"] = lambda key: (CATEGORY_BY_KEY.get(key).group.value if key in CATEGORY_BY_KEY else "unknown")
+    t.env.globals["app_version"] = APP_VERSION
     return t
 
 

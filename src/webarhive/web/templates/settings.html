@@ -238,6 +238,14 @@
           <label class="field__lbl">best_snapshot_epoch_parallelism{{ help_dot("Сколько эпох best-snapshot обрабатываются параллельно. Общий IA-троттл всё равно лимитирует rate, но пока одна эпоха ждёт availability-чек, другая может уже фетчить HTML. Дефолт 3.") }}</label>
           <input class="input" type="number" min="1" max="10" name="best_snapshot_epoch_parallelism" value="{{ fields.best_snapshot_epoch_parallelism }}">
         </div>
+        <div class="field">
+          <label class="field__lbl">best_snapshot_min_epoch_days{{ help_dot("Эпохи короче этого числа дней пропускаются для best-snapshot. У блогов title главной меняется с каждым постом → генерирует 30+ микро-эпох по 1-2 недели. Искать «лучший слепок» для них бессмысленно. Дефолт 30 дней.") }}</label>
+          <input class="input" type="number" min="0" max="365" name="best_snapshot_min_epoch_days" value="{{ fields.best_snapshot_min_epoch_days }}">
+        </div>
+        <div class="field">
+          <label class="field__lbl">best_snapshot_max_epochs{{ help_dot("Жёсткий потолок на число эпох в обработке best-snapshot. Если получилось больше — берём N самых длинных. Защита от 25-минутных прогонов на блогах. Дефолт 10.") }}</label>
+          <input class="input" type="number" min="1" max="50" name="best_snapshot_max_epochs" value="{{ fields.best_snapshot_max_epochs }}">
+        </div>
         <div class="field" style="justify-content:end">
           <label class="toggle {% if fields.enable_best_snapshot_content_llm %}toggle--on{% endif %}">
             <input type="checkbox" name="enable_best_snapshot_content_llm" value="true" {% if fields.enable_best_snapshot_content_llm %}checked{% endif %} style="display:none" onchange="this.parentNode.classList.toggle('toggle--on', this.checked)">

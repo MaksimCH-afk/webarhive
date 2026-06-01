@@ -269,6 +269,7 @@ _INT_FIELDS = {
     "whois_cache_ttl_days", "whois_monthly_floor",
     "best_snapshot_top_n", "best_snapshot_max_resources",
     "best_snapshot_per_epoch_timeout_sec",
+    "best_snapshot_min_epoch_days", "best_snapshot_max_epochs",
     "llm_parallelism", "best_snapshot_epoch_parallelism",
     "cdx_cache_ttl_hours",
 }

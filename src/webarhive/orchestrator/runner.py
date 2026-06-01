@@ -377,8 +377,15 @@ async def process_domain(
                 tracer.info("LLM-уточнение редиректов выполнено")
 
         # --- Drops: feed gap-detection both 200-versions and 404 markers ---
+        # 404 фильтруем до home-only по той же причине что и тематику:
+        # 404 на отдельных блог-постах не значимы для «домен жил/умер».
+        # Раньше gap-детекция видела 404 на /blog/2010-post вне диапазона
+        # эпох главной → «тематику сравнить не вышло» в reason.
         gap_times: list[datetime] = [v.captured_at for v in topic_result.versions]
+        from webarhive.analysis.best_snapshot import _is_home_page
         for row in history.not_found_rows:
+            if not _is_home_page(row.original, domain_row.domain):
+                continue
             ts = _safe_parse(row.timestamp)
             if ts:
                 gap_times.append(ts)
@@ -472,12 +479,37 @@ async def process_domain(
                 epoch_candidates,
                 filter_home_page_rows,
             )
-            tracer.step("ЛУЧШИЙ_СЛЕПОК", f"эпох: {len(topic_result.epochs)}")
             top_n = int(bs_cfg.get("top_n", 3))
             max_res = int(bs_cfg.get("max_resources_per_candidate", 8))
             per_epoch_timeout = float(bs_cfg.get("per_epoch_timeout_sec", 90))
             epoch_parallelism = max(1, int(bs_cfg.get("epoch_parallelism", 3)))
+            min_epoch_days = int(bs_cfg.get("min_epoch_days", 30))
+            max_epochs = max(1, int(bs_cfg.get("max_epochs", 10)))
             home_rows = filter_home_page_rows(cdx_rows, domain_row.domain)
+
+            # Фильтр эпох: пропускаем короткие (title-shift в блоге часто
+            # создаёт 30+ микро-эпох по неделе), плюс ограничиваем общее
+            # число до max_epochs (берём самые длинные). Без этого best-
+            # snap на блоге уходил в 25 минут timeout-ов.
+            all_epochs = list(enumerate(topic_result.epochs))
+            eligible = [
+                (i, ep) for i, ep in all_epochs
+                if (ep.period_to - ep.period_from).days >= min_epoch_days
+            ]
+            skipped_short = len(all_epochs) - len(eligible)
+            if len(eligible) > max_epochs:
+                eligible.sort(
+                    key=lambda x: (x[1].period_to - x[1].period_from).days,
+                    reverse=True,
+                )
+                eligible = eligible[:max_epochs]
+                eligible.sort(key=lambda x: x[0])  # вернуть исходный порядок
+            tracer.step(
+                "ЛУЧШИЙ_СЛЕПОК",
+                f"эпох всего: {len(all_epochs)}, обработаем: {len(eligible)} "
+                f"(порог длительности: {min_epoch_days}д, "
+                f"пропущено короткими: {skipped_short})",
+            )
 
             async def _bs_progress(msg: str) -> None:
                 tracer.info(msg)
@@ -526,7 +558,7 @@ async def process_domain(
                     )
 
             await asyncio.gather(*(
-                _process_epoch(i, ep) for i, ep in enumerate(topic_result.epochs)
+                _process_epoch(i, ep) for i, ep in eligible
             ))
 
         # --- Persist result components ---
