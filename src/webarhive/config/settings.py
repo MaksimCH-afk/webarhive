@@ -17,7 +17,7 @@ OVERRIDES_PATH = Path("data/settings.json")
 # are editable from the UI too (user explicitly asked for it) — kept in
 # data/settings.json which is gitignored, so secrets don't leak via git.
 _EDITABLE_FIELDS = {
-    "openrouter_api_key",
+    "llm_provider", "openrouter_api_key", "openai_api_key",
     "model_classification", "model_verdict", "model_smart_drop", "model_redirect",
     "enable_verdict", "enable_smart_drop", "enable_redirect_llm",
     "max_llm_calls_per_domain", "cost_budget_per_domain",
@@ -56,7 +56,13 @@ class Settings(BaseSettings):
     )
 
     # Secrets
+    # LLM provider — «openrouter» (по умолчанию, любой подключённый там
+    # поставщик через единый endpoint) или «openai» (напрямую к OpenAI).
+    # Ключ берётся ИЗ соответствующего поля: openrouter_api_key или
+    # openai_api_key. Не-используемый ключ можно оставить пустым.
+    llm_provider: str = Field(default="openrouter", alias="LLM_PROVIDER")
     openrouter_api_key: str = Field(default="", alias="OPENROUTER_API_KEY")
+    openai_api_key: str = Field(default="", alias="OPENAI_API_KEY")
 
     # DB
     database_url: str = Field(
@@ -176,6 +182,9 @@ class Settings(BaseSettings):
     def snapshot(self) -> dict:
         """Settings snapshot copied into each run (spec §11)."""
         return {
+            "llm": {
+                "provider": self.llm_provider,
+            },
             "models": {
                 "classification": self.model_classification,
                 "verdict": self.model_verdict,

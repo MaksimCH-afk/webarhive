@@ -22,19 +22,31 @@
 
   <form method="post" action="/settings" class="card__body col gap-5">
 
-    {#- API-ключи -#}
+    {#- LLM-провайдер и API-ключи -#}
     <section class="col gap-3">
-      <div class="section-title" style="margin:0">API-ключи</div>
+      <div class="section-title" style="margin:0">LLM-провайдер и API-ключи</div>
       <div class="form-grid">
         <div class="field">
-          <label class="field__lbl">OPENROUTER_API_KEY{{ help_dot("Ключ для вызовов LLM (классификация тематики, вердикт). Если поле оставить пустым — сохранённый ранее ключ не затрётся. Получить: openrouter.ai/keys") }}</label>
-          <input class="input" type="password" name="openrouter_api_key" autocomplete="off"
-                 placeholder="{% if settings.openrouter_api_key %}✓ задан ({{ settings.openrouter_api_key[:6] }}…){% else %}sk-or-v1-...{% endif %}">
+          <label class="field__lbl">LLM_PROVIDER{{ help_dot("Куда отправлять запросы. «openrouter» — единый шлюз ко множеству провайдеров (OpenAI, Anthropic, Google, локальные). «openai» — напрямую к api.openai.com. Используется ключ из соответствующего поля ниже.") }}</label>
+          <select class="select" name="llm_provider">
+            <option value="openrouter" {% if fields.llm_provider == 'openrouter' or not fields.llm_provider %}selected{% endif %}>openrouter</option>
+            <option value="openai" {% if fields.llm_provider == 'openai' %}selected{% endif %}>openai (direct)</option>
+          </select>
         </div>
         <div class="field">
           <label class="field__lbl">WHOIS_API_KEY{{ help_dot("Ключ WhoisJSON — для получения реальной даты регистрации домена. Бесплатный план: 1000 запросов/мес, 20/мин. Получить: whoisjson.com. Оставить пустым — сохранённый ключ не затрётся.") }}</label>
           <input class="input" type="password" name="whois_api_key" autocomplete="off"
                  placeholder="{% if settings.whois_api_key %}✓ задан ({{ settings.whois_api_key[:6] }}…){% else %}токен из whoisjson.com{% endif %}">
+        </div>
+        <div class="field">
+          <label class="field__lbl">OPENROUTER_API_KEY{{ help_dot("Ключ openrouter.ai/keys. Используется когда LLM_PROVIDER=openrouter. Если поле оставить пустым — сохранённый ранее ключ не затрётся.") }}</label>
+          <input class="input" type="password" name="openrouter_api_key" autocomplete="off"
+                 placeholder="{% if settings.openrouter_api_key %}✓ задан ({{ settings.openrouter_api_key[:6] }}…){% else %}sk-or-v1-...{% endif %}">
+        </div>
+        <div class="field">
+          <label class="field__lbl">OPENAI_API_KEY{{ help_dot("Ключ platform.openai.com/api-keys. Используется когда LLM_PROVIDER=openai. Формат sk-... или sk-proj-... Если поле оставить пустым — сохранённый ранее ключ не затрётся.") }}</label>
+          <input class="input" type="password" name="openai_api_key" autocomplete="off"
+                 placeholder="{% if settings.openai_api_key %}✓ задан ({{ settings.openai_api_key[:6] }}…){% else %}sk-proj-... или sk-...{% endif %}">
         </div>
       </div>
     </section>
@@ -43,7 +55,11 @@
     <section class="col gap-3">
       <div class="row gap-3">
         <div class="section-title" style="margin:0">Модели по ролям</div>
-        <span class="muted" style="font-size:12px">формат OpenRouter: <code>провайдер/модель</code> (см. справку ниже)</span>
+        <span class="muted" style="font-size:12px">
+          формат для openrouter: <code>провайдер/модель</code> (например <code>openai/gpt-4o-mini</code>) ·
+          формат для openai-direct: голое имя (например <code>gpt-4o-mini</code>, <code>gpt-4.1-mini</code>, <code>o3-mini</code>) ·
+          см. справку ниже
+        </span>
       </div>
       <div class="form-grid">
         <div class="field">
@@ -63,15 +79,57 @@
           <input class="input" name="model_redirect" value="{{ fields.model_redirect }}">
         </div>
       </div>
+      <details class="muted" style="font-size:12px" open>
+        <summary style="cursor:pointer">тарифная сетка — на глаз, до запуска</summary>
+        <div style="margin:8px 0 4px;color:var(--text-2)">
+          Цены — за <b>1 миллион токенов</b> (input / output). Один запрос classification ≈ 1.5–2 KTok input + 0.1 KTok output (~$0.0003 на gpt-4o-mini).
+          Бюджет на 1 домен ≈ 40 LLM-вызовов × ваша модель. На 100 доменов с gpt-4o-mini выйдет около <b>$1–2</b>, со sonnet-4.5 — около <b>$30–60</b>.
+        </div>
+        <table style="width:100%;border-collapse:collapse;font-size:12px;margin-top:4px">
+          <thead>
+            <tr style="border-bottom:1px solid var(--border)">
+              <th style="text-align:left;padding:4px 6px">модель</th>
+              <th style="text-align:right;padding:4px 6px">input $/1M</th>
+              <th style="text-align:right;padding:4px 6px">output $/1M</th>
+              <th style="text-align:left;padding:4px 6px">кому это</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr><td style="padding:3px 6px"><code>gemini-2.0-flash</code></td><td style="text-align:right">$0.075</td><td style="text-align:right">$0.30</td><td>самая дешёвая, для огромных батчей</td></tr>
+            <tr><td style="padding:3px 6px"><code>gpt-4o-mini</code></td><td style="text-align:right">$0.15</td><td style="text-align:right">$0.60</td><td>★ дефолт для classification, оптимум цена/качество</td></tr>
+            <tr><td style="padding:3px 6px"><code>gpt-3.5-turbo</code></td><td style="text-align:right">$0.50</td><td style="text-align:right">$1.50</td><td>устаревает, gpt-4o-mini лучше за те же деньги</td></tr>
+            <tr><td style="padding:3px 6px"><code>claude-3.5-haiku</code></td><td style="text-align:right">$0.80</td><td style="text-align:right">$4.00</td><td>быстрая, для verdict если хочется anthropic</td></tr>
+            <tr><td style="padding:3px 6px"><code>gpt-4.1-mini</code></td><td style="text-align:right">$0.40</td><td style="text-align:right">$1.60</td><td>чуть умнее 4o-mini, чуть дороже</td></tr>
+            <tr><td style="padding:3px 6px"><code>o4-mini</code> / <code>o3-mini</code></td><td style="text-align:right">$1.10</td><td style="text-align:right">$4.40</td><td>reasoning для verdict на сложных доменах</td></tr>
+            <tr><td style="padding:3px 6px"><code>gpt-4o</code></td><td style="text-align:right">$2.50</td><td style="text-align:right">$10.00</td><td>флагман — только для verdict, ОДИН вызов на домен</td></tr>
+            <tr><td style="padding:3px 6px"><code>gpt-4.1</code></td><td style="text-align:right">$3.00</td><td style="text-align:right">$12.00</td><td>—//—</td></tr>
+            <tr><td style="padding:3px 6px"><code>claude-sonnet-4.5</code></td><td style="text-align:right">$3.00</td><td style="text-align:right">$15.00</td><td>топ для verdict, ОДИН вызов на домен</td></tr>
+            <tr><td style="padding:3px 6px"><code>o1</code> / <code>gpt-4.1</code> (high)</td><td style="text-align:right">$15.00</td><td style="text-align:right">$60.00</td><td>⚠ запредельно для нашего сценария — НЕ используйте для classification</td></tr>
+          </tbody>
+        </table>
+        <div style="margin-top:6px;color:var(--text-3)">
+          ⚠ <b>classification</b> вызывается до 40 раз на домен — экономьте. <b>verdict / smart_drop / redirect</b> — по 1-3 вызова, можно ставить дорогую.
+        </div>
+      </details>
       <details class="muted" style="font-size:12px">
-        <summary style="cursor:pointer">примеры моделей OpenRouter</summary>
+        <summary style="cursor:pointer">примеры моделей OpenRouter (full ID)</summary>
         <ul style="margin:6px 0 0 22px;padding:0">
-          <li><code>openai/gpt-4o-mini</code> — дёшево и быстро (~$0.15/1M), хороший дефолт для classification</li>
+          <li><code>openai/gpt-4o-mini</code>, <code>openai/gpt-4o</code>, <code>openai/gpt-4.1-mini</code></li>
           <li><code>anthropic/claude-3.5-haiku</code>, <code>anthropic/claude-sonnet-4.5</code></li>
-          <li><code>google/gemini-2.0-flash-001</code> — самая дешёвая для большого объёма</li>
-          <li><code>meta-llama/llama-3.1-8b-instruct:free</code> — бесплатная (медленнее)</li>
+          <li><code>google/gemini-2.0-flash-001</code></li>
+          <li><code>meta-llama/llama-3.1-8b-instruct:free</code> — бесплатная (медленнее, ниже качество)</li>
         </ul>
-        Полный каталог: <a class="help-link" href="https://openrouter.ai/models" target="_blank" rel="noopener">openrouter.ai/models {{ icon("ExternalLink", 11) }}</a>
+        Полный каталог с актуальными ценами: <a class="help-link" href="https://openrouter.ai/models" target="_blank" rel="noopener">openrouter.ai/models {{ icon("ExternalLink", 11) }}</a>
+      </details>
+      <details class="muted" style="font-size:12px">
+        <summary style="cursor:pointer">примеры моделей OpenAI (direct, голое имя)</summary>
+        <ul style="margin:6px 0 0 22px;padding:0">
+          <li><code>gpt-4o-mini</code>, <code>gpt-4o</code></li>
+          <li><code>gpt-4.1-mini</code>, <code>gpt-4.1</code></li>
+          <li><code>o3-mini</code>, <code>o4-mini</code></li>
+          <li><code>gpt-3.5-turbo</code></li>
+        </ul>
+        Полный каталог с актуальными ценами: <a class="help-link" href="https://platform.openai.com/docs/models" target="_blank" rel="noopener">platform.openai.com/docs/models {{ icon("ExternalLink", 11) }}</a>
       </details>
     </section>
 
@@ -275,7 +333,9 @@
       <div class="kv__row"><span class="kv__k">APP_DOMAIN</span><span class="kv__v kv__v--mono">{{ settings.app_domain }}</span></div>
       <div class="kv__row"><span class="kv__k">DATABASE_URL</span><span class="kv__v kv__v--mono" style="max-width:280px;overflow:hidden;text-overflow:ellipsis">{{ settings.database_url }}</span></div>
       <div class="kv__row"><span class="kv__k">TRUST_PROXY_HEADERS</span><span class="kv__v">{{ 'да' if settings.trust_proxy_headers else 'нет' }}</span></div>
+      <div class="kv__row"><span class="kv__k">активный LLM-провайдер</span><span class="kv__v"><code>{{ settings.llm_provider or 'openrouter' }}</code></span></div>
       <div class="kv__row"><span class="kv__k">статус OpenRouter ключа</span><span class="kv__v">{% if settings.openrouter_api_key %}✓ задан ({{ settings.openrouter_api_key[:6] }}…){% else %}<span style="color:var(--dirty-fg)">не задан</span>{% endif %}</span></div>
+      <div class="kv__row"><span class="kv__k">статус OpenAI ключа</span><span class="kv__v">{% if settings.openai_api_key %}✓ задан ({{ settings.openai_api_key[:6] }}…){% else %}<span style="color:var(--dirty-fg)">не задан</span>{% endif %}</span></div>
     </div>
   </div>
 </div>

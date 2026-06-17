@@ -1,10 +1,15 @@
-"""OpenRouter chat client (spec §3.3, §11).
+"""LLM chat client (spec §3.3, §11).
 
 - Model is ALWAYS a parameter — never hardcoded. Different roles can use
   different models (spec §9, §11).
 - API key from env only (never logged or returned).
 - Strict JSON expected; we parse and validate at the call site, raw
   response always saved for audit.
+- Поддерживает два провайдера через единый chat-completions интерфейс:
+  «openrouter» (по умолчанию, любой подключённый там провайдер) и
+  «openai» (напрямую к api.openai.com). Класс называется OpenRouterClient
+  по историческим причинам — он давно работает с любым endpoint в
+  OpenAI-совместимом формате.
 """
 
 from __future__ import annotations
@@ -27,6 +32,13 @@ from tenacity import (
 logger = logging.getLogger(__name__)
 
 OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
+OPENAI_URL = "https://api.openai.com/v1/chat/completions"
+
+# Поддерживаемые провайдеры → URL и поведение заголовков.
+PROVIDER_ENDPOINTS = {
+    "openrouter": OPENROUTER_URL,
+    "openai": OPENAI_URL,
+}
 
 
 @dataclass(frozen=True, slots=True)
@@ -90,15 +102,22 @@ class OpenRouterClient:
         max_retries: int = 3,
         backoff_base: float = 2.0,
         per_call_timeout: float = 45.0,
+        provider: str = "openrouter",
     ) -> None:
         if not api_key:
-            raise ValueError("OPENROUTER_API_KEY is required")
+            raise ValueError("LLM API key is required")
+        if provider not in PROVIDER_ENDPOINTS:
+            raise ValueError(
+                f"Unknown provider {provider!r}; expected one of {list(PROVIDER_ENDPOINTS)}"
+            )
         self._api_key = api_key
         self._app_domain = app_domain
         self._client = client or httpx.AsyncClient(timeout=timeout)
         self._owns_client = client is None
         self._max_retries = max_retries
         self._backoff_base = backoff_base
+        self._provider = provider
+        self._endpoint = PROVIDER_ENDPOINTS[provider]
         # Wall-clock cap на ОДИН вызов chat_json (включая retry). Раньше
         # зависший вызов мог съесть до 3×60с tenacity-backoff. Теперь
         # выходим с error по истечении этого таймаута и пайплайн идёт
@@ -136,15 +155,18 @@ class OpenRouterClient:
             ],
             "temperature": temperature,
             "max_tokens": max_tokens,
-            # Some OpenRouter providers honour this; not all. Harmless if ignored.
+            # OpenAI и большинство OpenRouter-провайдеров honour this.
             "response_format": {"type": "json_object"},
         }
         headers = {
             "Authorization": f"Bearer {self._api_key}",
             "Content-Type": "application/json",
-            "HTTP-Referer": f"https://{self._app_domain}",
-            "X-Title": "webarhive-checker",
         }
+        # OpenRouter использует HTTP-Referer/X-Title для своей атрибуции.
+        # OpenAI эти заголовки игнорирует, но и не ругается на них.
+        if self._provider == "openrouter":
+            headers["HTTP-Referer"] = f"https://{self._app_domain}"
+            headers["X-Title"] = "webarhive-checker"
 
         start = time.monotonic()
         retryer = AsyncRetrying(
@@ -157,7 +179,7 @@ class OpenRouterClient:
         async def _do_call() -> dict:
             async for attempt in retryer:
                 with attempt:
-                    resp = await self._client.post(OPENROUTER_URL, json=payload, headers=headers)
+                    resp = await self._client.post(self._endpoint, json=payload, headers=headers)
                     if resp.status_code == 429 or 500 <= resp.status_code < 600:
                         logger.warning("openrouter retryable status=%s", resp.status_code)
                         raise httpx.HTTPStatusError("retryable", request=resp.request, response=resp)

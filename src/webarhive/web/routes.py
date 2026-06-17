@@ -89,6 +89,14 @@ class CanvasFilters:
         return self._encode(d)
 
 
+def _active_llm_key(settings) -> str:
+    """Возвращает API-ключ для текущего LLM-провайдера. Если провайдер
+    «openai» — берём openai_api_key, иначе openrouter_api_key."""
+    if (settings.llm_provider or "openrouter").lower() == "openai":
+        return settings.openai_api_key
+    return settings.openrouter_api_key
+
+
 @html_router.get("/", response_class=HTMLResponse)
 async def main_page(request: Request):
     async with get_session() as s:
@@ -280,11 +288,12 @@ _FLOAT_FIELDS = {
 # Свободные строки (модели, API-ключи).
 _STR_FIELDS = (
     "model_classification", "model_verdict", "model_smart_drop", "model_redirect",
-    "openrouter_api_key", "whois_api_key",
+    "openrouter_api_key", "openai_api_key", "whois_api_key",
+    "llm_provider",
 )
 # Поля-«секреты»: если оператор отправил пустое значение, ИГНОРИРУЕМ —
 # не затираем уже сохранённый ключ пустотой.
-_SECRET_FIELDS = ("openrouter_api_key", "whois_api_key")
+_SECRET_FIELDS = ("openrouter_api_key", "openai_api_key", "whois_api_key")
 
 
 @html_router.post("/settings", response_class=HTMLResponse)
@@ -371,7 +380,7 @@ async def api_create_run(
     # Kick off the pipeline in the background.
     task = asyncio.create_task(run_pipeline(
         run_id=run_id, settings_snapshot=snap,
-        api_key=settings.openrouter_api_key,
+        api_key=_active_llm_key(settings),
         whois_api_key=settings.whois_api_key,
     ))
     request.app.state.pipeline_tasks[run_id] = task
@@ -401,7 +410,7 @@ async def api_rerun(request: Request, run_id: int):
     s = get_settings()
     task = asyncio.create_task(run_pipeline(
         run_id=new_run_id, settings_snapshot=snap,
-        api_key=s.openrouter_api_key,
+        api_key=_active_llm_key(s),
         whois_api_key=s.whois_api_key,
     ))
     request.app.state.pipeline_tasks[new_run_id] = task

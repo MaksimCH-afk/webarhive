@@ -817,7 +817,14 @@ async def run_pipeline(
                         max_retries=max_retries, backoff_base=backoff)
         fetcher = SnapshotFetcher(throttle=throttle, client=http,
                                   max_retries=max_retries, backoff_base=backoff)
-        llm = OpenRouterClient(api_key=api_key) if api_key else None
+        # Provider определяется снапшотом прогона; ключ передаёт вызывающий.
+        llm_provider = (settings_snapshot.get("llm", {}) or {}).get(
+            "provider", "openrouter"
+        )
+        llm = (
+            OpenRouterClient(api_key=api_key, provider=llm_provider)
+            if api_key else None
+        )
 
         # WHOIS client only built when feature is on AND key is set.
         whois_cfg = settings_snapshot.get("whois", {}) or {}

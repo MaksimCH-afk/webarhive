@@ -17,7 +17,7 @@ from webarhive.db.engine import get_session
 # Версия деплоя — увеличиваем при каждой правке кода. Шапка показывает
 # это значение справа от «настройки» — чтобы оператор видел, что
 # именно крутится в Docker'е, и не путался при пересборках.
-APP_VERSION = "2.0"
+APP_VERSION = "3.0"
 
 
 def templates_for(directory: Path) -> Jinja2Templates:
