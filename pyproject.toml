@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "webarhive"
-version = "0.1.0"
-description = "Domain history & cleanliness checker over Internet Archive Wayback Machine"
+version = "3.0.0"
+description = "Web Archive Checker: domain history & cleanliness checker over Internet Archive Wayback Machine + LLM (OpenAI / OpenRouter)"
 requires-python = ">=3.11"
 dependencies = [
     "fastapi>=0.110",

@@ -141,7 +141,7 @@ uvicorn webarhive.web.app:create_app --factory --host 127.0.0.1 --port 8000
 ```bash
 unzip -o webarhive-vX.Y-DATE.zip -x 'webarhive/.env' 'webarhive/data/*'
 cd webarhive
-docker compose build --no-cache app    # форсируем пересборку
+docker compose build --no-cache webarhive    # форсируем пересборку
 docker compose up -d
 ```
 
