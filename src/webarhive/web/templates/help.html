@@ -72,15 +72,14 @@
     </section>
 
     <section>
-      <div class="section-title" style="margin:0 0 8px">Модели OpenRouter</div>
-      <p>В поле «модель» нужно вписывать имя в формате <code>провайдер/модель</code> — OpenRouter маршрутизирует к нужному провайдеру:</p>
+      <div class="section-title" style="margin:0 0 8px">LLM-провайдер и модели</div>
+      <p>В <a class="help-link" href="/settings">/settings</a> выбирается провайдер (<code>LLM_PROVIDER</code>) и модель для каждой роли. Поддерживаются:</p>
       <ul style="margin:0;padding-left:22px">
-        <li><code>openai/gpt-4o-mini</code> — дёшево и быстро</li>
-        <li><code>anthropic/claude-3.5-haiku</code>, <code>anthropic/claude-sonnet-4.5</code></li>
-        <li><code>google/gemini-2.0-flash-001</code> — самая дешёвая</li>
-        <li><code>meta-llama/llama-3.1-8b-instruct:free</code> — бесплатная</li>
+        <li><b>OpenRouter</b> (по умолчанию) — единый шлюз ко множеству провайдеров. Формат модели: <code>провайдер/модель</code> (например <code>openai/gpt-4o-mini</code>, <code>anthropic/claude-sonnet-4.5</code>, <code>google/gemini-2.0-flash-001</code>). Каталог: <a class="help-link" href="https://openrouter.ai/models" target="_blank" rel="noopener">openrouter.ai/models {{ icon("ExternalLink", 11) }}</a></li>
+        <li><b>OpenAI (direct)</b> — напрямую к <code>api.openai.com</code>. Формат модели: голое имя (<code>gpt-4o-mini</code>, <code>gpt-4o</code>, <code>gpt-4.1-mini</code>, <code>o3-mini</code>). Каталог: <a class="help-link" href="https://platform.openai.com/docs/models" target="_blank" rel="noopener">platform.openai.com/docs/models {{ icon("ExternalLink", 11) }}</a></li>
       </ul>
-      <p>Полный каталог: <a class="help-link" href="https://openrouter.ai/models" target="_blank" rel="noopener">openrouter.ai/models {{ icon("ExternalLink", 11) }}</a>.</p>
+      <p style="margin-top:8px">Тарифная сетка с ценами за 1M токенов — на странице <a class="help-link" href="/settings">/settings</a> в секции «Модели по ролям». Помогает не запустить случайно дорогой прогон.</p>
+      <p style="margin-top:4px"><b>Правило большого пальца:</b> <code>classification</code> вызывается до 40× на домен — экономьте (например <code>gpt-4o-mini</code> ~$0.15/1M). <code>verdict</code> вызывается 1× на домен — можно ставить умную модель.</p>
     </section>
 
     <section>
@@ -88,7 +87,8 @@
       <p><b>Прогон долго идёт.</b> Это нормально: Internet Archive троттлит. Прогресс-бар и счётчики живые. Прерывать только если совсем встало.</p>
       <p><b>Прервался посередине.</b> На странице прогона есть кнопка «повторить» — создаст новый прогон с теми же доменами и настройками.</p>
       <p><b>Домен «нет данных».</b> Его нет в архиве Wayback. Это не ошибка — это диагноз.</p>
-      <p><b>Прогон с включёнными LLM-ролями встал.</b> Скорее всего на одном из доменов очень много REVIEW-редиректов на мёртвые цели; per-domain timeout (10 мин по умолчанию) его прервёт.</p>
+      <p><b>Прогон с включёнными LLM-ролями встал.</b> Скорее всего на одном из доменов очень много REVIEW-редиректов на мёртвые цели; per-domain timeout (30 мин по умолчанию) его прервёт.</p>
+      <p><b>Не вижу обновлённую версию после деплоя.</b> Проверьте бейдж <code>vX.Y</code> в шапке справа. Если показывает старую — Docker не пересобрал образ. Перезапустите с <code>docker compose build --no-cache webarhive</code>.</p>
     </section>
 
   </div>
